@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en-NZ">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hops — Brewing Recipe Builder</title>
+<meta name="description" content="Free, self-contained homebrew recipe builder. No account, no cost, all data stays in your browser." />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://b0x.nz https://shh.insecure.co.nz; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none';" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="mobile-topbar">
+  <button id="sidebarToggle" aria-label="Open menu">&#9776;</button>
+  <div class="brand"><span class="mark">&#9673;</span> Hops</div>
+</div>
+<div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand"><span class="mark">&#9673;</span> Hops</div>
+      <div class="tagline">Recipe Builder</div>
+    </div>
+    <div id="sectionNav"></div>
+    <div class="sidebar-actions">
+      <button class="btn btn-primary" id="newRecipeBtn">+ New Recipe</button>
+      <button class="btn" id="newFolderBtn">+ Folder</button>
+    </div>
+    <div class="recipe-list" id="recipeList"></div>
+    <div class="sidebar-footer">
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <button class="btn btn-sm" id="unitToggleBtn" style="flex:1;">Units: Metric</button>
+      </div>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <button class="btn btn-sm" id="exportAllBtn" style="flex:1;">Export Backup</button>
+        <label class="btn btn-sm" style="flex:1; text-align:center;">
+          Import
+          <input type="file" id="importInput" accept=".json,.xml" />
+        </label>
+      </div>
+      Recipes save automatically in this browser. Export a backup any time, or share a single recipe as a link.
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="data.js"></script>
+<script src="calc.js"></script>
+<script src="units.js"></script>
+<script src="security.js"></script>
+<script src="tree.js"></script>
+<script src="beerxml.js"></script>
+<script src="share.js"></script>
+<script src="importers.js"></script>
+<script src="app.js"></script>
+<script>
+  document.getElementById("sidebarToggle").addEventListener("click", () => {
+    document.getElementById("sidebar").classList.add("open");
+    document.getElementById("sidebarBackdrop").classList.add("open");
+  });
+  document.getElementById("sidebarBackdrop").addEventListener("click", () => {
+    document.getElementById("sidebar").classList.remove("open");
+    document.getElementById("sidebarBackdrop").classList.remove("open");
+  });
+  document.getElementById("recipeList").addEventListener("click", () => {
+    if (window.innerWidth <= 860) {
+      document.getElementById("sidebar").classList.remove("open");
+      document.getElementById("sidebarBackdrop").classList.remove("open");
+    }
+  });
+</script>
+</body>
+</html>

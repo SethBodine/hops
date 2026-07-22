@@ -1,0 +1,6 @@
+# Wrangler config for deploying Hops as a Cloudflare Pages static site.
+# No build step required - this is plain HTML/CSS/JS.
+
+name = "hops"
+compatibility_date = "2026-07-01"
+pages_build_output_dir = "."
