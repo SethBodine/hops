@@ -130,9 +130,102 @@ Standard cubic polynomial correction for hydrometers calibrated at a reference t
 ratio = new batch volume ÷ old batch volume
 ```
 
-Every fermentable amount, hop amount, misc amount, and the water volume are multiplied by
-this ratio. Percentages (efficiency, attenuation, alpha acid, hop boil times) are left
-unchanged, since scaling volume doesn't change process percentages or hop chemistry timing.
+Every fermentable amount, hop amount, misc amount, and the mash/sparge water volumes are
+multiplied by this ratio. Percentages (efficiency, attenuation, alpha acid, hop boil times)
+are left unchanged, since scaling volume doesn't change process percentages or hop chemistry
+timing.
+
+## Pre-Boil Gravity
+
+```
+Pre-Boil Gravity = same gravity-point formula as OG, evaluated at the pre-boil volume instead of the batch volume
+```
+
+Uses the identical gravity-points calculation as OG (see above) - the total sugar extracted
+from the grain bill doesn't change between pre-boil and post-boil, only the volume it's
+dissolved in does, so a bigger pre-boil volume reads a lower gravity that then concentrates
+up to OG as the boil reduces it.
+
+Pre-boil volume, if not manually overridden, is estimated as:
+
+```
+pre-boil volume = batch volume + equipment trub/chiller loss + (boil-off rate × boil time ÷ 60)
+```
+
+using the linked Equipment Profile's boil-off rate and trub loss. Without an equipment
+profile linked, a simple 1 gal/hr boil-off assumption is used as a fallback so the field
+still shows a sensible placeholder.
+
+## Pounds (or Kilograms) per Barrel
+
+```
+barrels = batch volume (US gal) ÷ 31
+lb per barrel = total fermentable weight (lb) ÷ barrels
+```
+
+A standard commercial-brewing yield metric (1 US barrel = 31 US gallons), included for
+comparison against commercial recipe formulation figures.
+
+## Strike Water Temperature
+
+```
+ratio (qt/lb) = mash water volume (quarts) ÷ mashable grain weight (lb)
+strike temp = (0.2 ÷ ratio) × (target mash temp − grain temp) + target mash temp
+strike temp (adjusted) = strike temp + equipment thermal-mass adjustment (if "Adjust Temp for Equipment" is ticked)
+```
+
+The classic strike-water-temperature formula (Palmer, *How to Brew*) — it accounts for how
+much a given water-to-grain ratio will cool (or need to overshoot) to land the mash at the
+target temperature, given the grain's starting temperature. The optional equipment
+adjustment (a fixed °F offset stored per Equipment Profile, default 2°F) is a simple
+approximation of how much extra heat a given mash tun's thermal mass absorbs — real
+absorption varies with tun material/insulation, so treat this as a starting estimate to
+tune against your own system's actual results, exactly as BeerSmith's own "Adjust Temp for
+Equipment" option does.
+
+## Water Hardness & Alkalinity
+
+**Effective (total) hardness**, ppm as CaCO3:
+
+```
+hardness = 2.497 × Ca (ppm) + 4.118 × Mg (ppm)
+```
+
+**Alkalinity** (raw, from bicarbonate alone — distinct from Residual Alkalinity above, which
+also nets out calcium/magnesium's buffering effect):
+
+```
+alkalinity = HCO3 (ppm) × 50 / 61
+```
+
+Both are standard ppm-as-CaCO3-equivalent conversions using the equivalent weights of
+calcium (20.04), magnesium (12.15), and bicarbonate (61), calculated from the **mash water**
+profile specifically (mash and sparge water are tracked separately — see below).
+
+## Mash vs. Sparge Water
+
+Salt additions are tracked per-addition as "Mash" or "Sparge" use, and diluted into their
+respective water volumes independently. All of the mash-chemistry stats above (Residual
+Alkalinity, Alkalinity, Effective Hardness, Sulfate:Chloride) are calculated from the mash
+water's adjusted profile only, since that's what actually affects mash pH — sparge water
+chemistry mostly just affects the final beer's mineral perception, not the mash itself, so
+it isn't run through the same "is this in a healthy range" analysis.
+
+Mash and sparge acid additions (e.g. lactic or phosphoric acid to lower mash/sparge pH) are
+tracked for record-keeping but are **not** currently factored into the Residual Alkalinity
+estimate — accurately predicting the pH effect of an acid addition needs a grain-acidity
+buffering model (malt colour, base malt vs. specialty malt proportions, etc.) that's out of
+scope for this calculator. Treat the RA number as your starting point, then adjust acid
+additions by taste/pH-meter reading as you always would.
+
+## % of Grist and Per-Hop IBU
+
+Two small "how much did each ingredient contribute" breakdowns, both straightforward:
+
+```
+% of grist (per fermentable) = that fermentable's weight ÷ total fermentable weight × 100
+IBU (per hop addition) = that addition's individual Tinseth contribution (see Bitterness above) — the total IBU is just the sum across all Boil additions
+```
 
 ---
 
@@ -148,3 +241,8 @@ unchanged, since scaling volume doesn't change process percentages or hop chemis
   in most free/open homebrew water calculators.
 - Priming sugar: corn sugar (dextrose) only. If you prime with table sugar or DME, use
   roughly 10% more sugar by weight for table sugar, or about 25% more for DME.
+- Strike water temperature: the "Adjust Temp for Equipment" offset is a fixed °F value per
+  Equipment Profile (default 2°F), not a physics-based thermal mass calculation - tune it
+  against what actually works for your system after a brew or two.
+- Mash/sparge acid additions are recorded but don't feed back into the Residual Alkalinity
+  number (see "Mash vs. Sparge Water" above) - they're for your own reference/repeatability.

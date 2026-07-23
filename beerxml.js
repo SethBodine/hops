@@ -151,19 +151,27 @@ const BeerXML = {
             cost: 0,
           } : { name: YEASTS[0].name, attenuation: YEASTS[0].attenuation, cost: 0 };
         })(),
-        waterVolGal: Units.lToGal(batchVolL) + 1,
+        mashWaterVolGal: Units.lToGal(batchVolL) * 0.65,
+        spargeWaterVolGal: Units.lToGal(batchVolL) * 0.45,
         waterBaseName: "Custom",
         waterBase: { Ca: 50, Mg: 5, Na: 10, SO4: 30, Cl: 30, HCO3: 50 },
         waterSalts: [],
         waterTarget: "Balanced Pale Ale",
+        mashAcid: { type: ACID_TYPES[0], amountMl: 0 },
+        spargeAcid: { type: ACID_TYPES[0], amountMl: 0 },
         mashProfileName: (rec.querySelector("MASH > NAME") && rec.querySelector("MASH > NAME").textContent.trim()) || "Single Infusion, Full Body",
         mashSteps: Array.from(rec.querySelectorAll("MASH_STEPS > MASH_STEP")).map(s => ({
           name: this.text(s, "NAME", "Mash Step"),
           temp: Math.round(Units.cToF(this.num(s, "STEP_TEMP", 67))),
           time: this.num(s, "STEP_TIME", 60),
         })),
+        grainTempF: 68,
+        adjustTempForEquip: false,
+        carbProfileName: "Custom",
         carbLevelVols: 2.4,
+        fermentationProfileName: "Custom",
         fermentationProfile: "",
+        preBoilVolGal: null,
         notes: this.text(rec, ":scope > NOTES", ""),
       };
       if (!r.mashSteps.length) r.mashSteps = [{ name: "Saccharification", temp: 152, time: 60 }];

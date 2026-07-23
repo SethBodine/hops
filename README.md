@@ -11,12 +11,22 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
 ## Features
 
 - **Recipe design** — fermentables, hops, yeast, and misc/fining ingredients, with live
-  OG/FG/ABV/IBU/colour calculations and a style-guideline comparison against ~14 built-in
-  styles.
-- **Water chemistry** — base water profile, salt additions (gypsum, calcium chloride, Epsom
-  salt, table salt, baking soda, chalk), one-click "match a target profile," residual
-  alkalinity and sulfate:chloride analysis.
-- **Mash & fermentation profiles**, **carbonation targets**.
+  OG/FG/ABV/IBU/colour calculations, per-fermentable **% of grist** and per-hop **IBU
+  contribution**, and a style-guideline comparison against ~14 built-in styles.
+- **Cost & batch stats** — total recipe cost, pre-boil volume/gravity, pounds (or kilograms)
+  per barrel. **Update Prices** pulls current costs from your Inventory in one click.
+- **Personal ingredient library** — **Save Item** stores a custom fermentable/hop/yeast for
+  reuse across recipes; **Substitute** swaps an ingredient for another from the built-in or
+  personal library while keeping the amount and cost.
+- **Undo Last** — reverts the last structural change (add/delete/substitute/scale/price
+  update) to a recipe, mirroring BeerSmith's own "Undo Last".
+- **Water chemistry** — base water profile, salt additions tracked separately for **mash vs.
+  sparge** water, mash/sparge acid additions, one-click "match a target profile," and mash
+  water analysis (residual alkalinity, raw alkalinity, effective hardness,
+  sulfate:chloride ratio).
+- **Mash & fermentation profiles**, a **strike water temperature** calculator (with an
+  optional equipment thermal-mass adjustment), and reusable **carbonation** and
+  **fermentation** profiles you can still fine-tune per recipe.
 - **Recipe/folder tree** — unlimited nested folders, drag-and-drop to reorganise, right-click
   to clone/rename/delete/move a recipe or folder, folder notes.
 - **Batches** — separate from the recipe itself; track Planning → Brewing → Fermenting →
@@ -24,11 +34,12 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
   recipe's own "Brew History" tab so you can tweak the next version with real data.
 - **Inventory** — simple stock tracking for fermentables, hops, yeast, and misc items, with
   a one-click "deduct from inventory" when you start brewing a batch.
-- **Equipment profiles** — reusable batch size / boil-off rate / trub loss / efficiency
-  defaults, applied to any recipe from its Design tab.
+- **Equipment profiles** — reusable batch size / boil-off rate / trub loss / efficiency /
+  thermal-mass defaults, applied to any recipe from its Design tab.
 - **Quick calculators** (Tools) — ABV from readings, priming sugar, hydrometer temperature
   correction — for brew-day use without opening a full recipe.
-- **Recipe scaling** — rescale a whole recipe to a new batch size in one step.
+- **Recipe scaling** — rescale a whole recipe (including mash/sparge water) to a new batch
+  size in one step.
 - **BeerXML import/export** — the standard format BeerSmith itself uses, so existing recipes
   can move in and out cleanly.
 - **Shareable links** — a recipe compresses into a URL that opens straight into the app on
@@ -37,7 +48,7 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
 - **Metric/Imperial toggle** — metric (kg/g/L/°C) by default (NZ locale), Imperial available
   in one click.
 - **Full backup export/import** — everything (recipes, folders, batches, inventory,
-  equipment) as one JSON file.
+  equipment, personal ingredient library) as one JSON file.
 
 See [FORMULAS.md](./FORMULAS.md) for exactly how every number is calculated, and
 [SECURITY.md](./SECURITY.md) for how the app addresses the OWASP Top 10.
@@ -55,6 +66,8 @@ Then open `http://localhost:8000`.
 
 ## Deploying to Cloudflare Pages (Wrangler)
 
+**Option A — deploy from your own machine:**
+
 1. Install Wrangler if you don't have it: `npm install -g wrangler`
 2. From this folder, log in once: `wrangler login`
 3. Deploy:
@@ -64,9 +77,38 @@ Then open `http://localhost:8000`.
 4. Point `hops.insecure.co.nz` at the Pages project in the Cloudflare dashboard (**Workers &
    Pages → hops → Custom domains → Add**).
 
-Or connect the GitHub repo directly in the Cloudflare dashboard
-(**Workers & Pages → Create → Pages → Connect to Git**) for auto-deploy on every push — since
-there's no build step, leave the build command empty and set the output directory to `/`.
+**Option B — auto-deploy on every push to GitHub (recommended):**
+
+1. In the Cloudflare dashboard: **Workers & Pages → Create → Pages → Connect to Git**, pick
+   this repo. Leave the build command empty and set the output directory to `/` — there's no
+   build step.
+2. Add the custom domain the same way as Option A.
+
+That's it for most people — Cloudflare's own Git integration handles the deploy-on-push for
+you without any extra config. If you'd rather run the deploy explicitly from a GitHub Actions
+workflow instead (e.g. to add a test/lint step first), this is a minimal example:
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to Cloudflare Pages
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy . --project-name=hops
+```
+
+You'd need to create a scoped Cloudflare API token (**Pages: Edit** permission is enough)
+and add it plus your Account ID as repo secrets (**Settings → Secrets and variables →
+Actions**) for this to work.
 
 ## Data & sharing
 
@@ -104,7 +146,19 @@ app.js           State, rendering, and all UI wiring
 
 ## Credits
 
-Built with [Claude](https://claude.ai) (Anthropic), based on a review of feature sets from:
+Built with [Claude](https://claude.ai) (Anthropic).
+
+**Primary reference: [BeerSmith](https://www.beersmith.com)**. The whole project started
+from a review of BeerSmith's desktop interface (Design, Water, and ingredient-table
+screenshots) and aims for close feature parity with it: equipment profiles, mash/sparge
+water agents with per-addition use, mash & sparge acid tracking, style guide comparison,
+strike water temperature, pre-boil gravity, pounds per barrel, per-fermentable grist % and
+per-hop IBU breakdown, a personal ingredient library with Substitute/Save Item, Update
+Prices from inventory, and Undo Last are all modelled directly on BeerSmith's own feature
+set. Hops isn't affiliated with or endorsed by BeerSmith — it's an independent, free,
+browser-based alternative inspired by it.
+
+Additional features were reviewed in and adapted from:
 
 - **[Brewfather](https://brewfather.app)** — equipment profiles, batch tracking
   (Planning/Brewing/Fermenting/Completed with actual-vs-estimated readings), inventory
@@ -113,8 +167,6 @@ Built with [Claude](https://claude.ai) (Anthropic), based on a review of feature
   recipe is a reusable template, a batch is one brew day's actual log against it.
 - **[biermacht](https://github.com/caseydavenport/biermacht)** — the idea of small
   standalone calculators (ABV, priming sugar, hydrometer correction) for quick brew-day use.
-
-Originally modelled on the look and feature set of BeerSmith's classic desktop interface.
 
 ## Licence
 

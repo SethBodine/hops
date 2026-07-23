@@ -100,10 +100,29 @@ const WATER_TARGET_PROFILES = {
 };
 
 const EQUIPMENT_PRESETS = [
-  { name: "5 Gallon Basic Kettle", batchVolGal: 5, boilTimeMin: 60, boilOffRateGalHr: 1.0, trubLossGal: 0.5, mashEfficiencyPct: 70 },
-  { name: "10 Gallon BrewEasy System", batchVolGal: 11, boilTimeMin: 75, boilOffRateGalHr: 1.5, trubLossGal: 0.75, mashEfficiencyPct: 64 },
-  { name: "BIAB 5 Gallon", batchVolGal: 5.5, boilTimeMin: 60, boilOffRateGalHr: 1.2, trubLossGal: 0.25, mashEfficiencyPct: 72 },
+  { name: "5 Gallon Basic Kettle", batchVolGal: 5, boilTimeMin: 60, boilOffRateGalHr: 1.0, trubLossGal: 0.5, mashEfficiencyPct: 70, tempAdjustF: 2 },
+  { name: "10 Gallon BrewEasy System", batchVolGal: 11, boilTimeMin: 75, boilOffRateGalHr: 1.5, trubLossGal: 0.75, mashEfficiencyPct: 64, tempAdjustF: 3 },
+  { name: "BIAB 5 Gallon", batchVolGal: 5.5, boilTimeMin: 60, boilOffRateGalHr: 1.2, trubLossGal: 0.25, mashEfficiencyPct: 72, tempAdjustF: 1 },
 ];
+
+const CARBONATION_PROFILES = {
+  "British Cask Ale": 1.5,
+  "European Lager": 2.6,
+  "American Ale": 2.4,
+  "Belgian Ale": 2.8,
+  "German Wheat Beer": 3.3,
+  "Highly Carbonated": 3.4,
+};
+
+const FERMENTATION_PROFILES = {
+  "Standard Ale": "Primary at 18-20\u00b0C for 10-14 days, then condition 2 weeks.",
+  "British Ale": "Primary at 18-19\u00b0C for 5-7 days, then condition.",
+  "Lager": "Primary at 10-12\u00b0C for 2-3 weeks, diacetyl rest at 16\u00b0C for 2 days, then lager at 1-4\u00b0C for 4-8 weeks.",
+  "Belgian Warm Ferment": "Primary at 22-26\u00b0C for 10-14 days, allow temperature to free-rise late in fermentation.",
+  "Hefeweizen": "Primary at 18-20\u00b0C for 7-10 days; keep temperature steady early on for classic ester/phenol balance.",
+};
+
+const ACID_TYPES = ["Lactic Acid (88%)", "Phosphoric Acid (10%)", "Citric Acid", "Acid Malt (Sauermalz)"];
 
 const MASH_PROFILES = {
   "Single Infusion, Full Body": [{ name: "Saccharification", temp: 154, time: 60 }],

@@ -32,17 +32,21 @@ const Calc = {
     return (76.08 * (og - fg) / (1.775 - og)) * (fg / 0.794);
   },
 
-  // Tinseth IBU formula. hops: [{amountOz, alphaPct, timeMin, use}], batchVolGal, og
-  estimateIBU(hops, batchVolGal, og) {
-    let totalIBU = 0;
-    for (const h of hops) {
-      if (h.use !== "Boil") continue; // whirlpool/dry hop contribute negligible/variable IBU, skip for simplicity
+  // Tinseth IBU formula, per-addition breakdown. hops: [{amountOz, alphaPct, timeMin, use}], batchVolGal, og
+  // Returns an array parallel to `hops` with the IBU contributed by each addition (0 for non-Boil uses).
+  ibuBreakdown(hops, batchVolGal, og) {
+    const volLiters = batchVolGal * 3.78541;
+    return hops.map(h => {
+      if (h.use !== "Boil") return 0; // whirlpool/dry hop contribute negligible/variable IBU, skip for simplicity
       const utilization = this.tinsethUtilization(h.timeMin, og);
-      const volLiters = batchVolGal * 3.78541;
       const aauMg = (h.amountOz * 28.3495 * (h.alphaPct / 100) * 1000) / volLiters; // mg/L alpha acids added
-      totalIBU += aauMg * utilization; // Tinseth: mg/L alpha acid x utilization = IBU (ppm)
-    }
-    return totalIBU;
+      return aauMg * utilization; // Tinseth: mg/L alpha acid x utilization = IBU (ppm)
+    });
+  },
+
+  // Tinseth IBU formula, total. hops: [{amountOz, alphaPct, timeMin, use}], batchVolGal, og
+  estimateIBU(hops, batchVolGal, og) {
+    return this.ibuBreakdown(hops, batchVolGal, og).reduce((sum, v) => sum + v, 0);
   },
 
   tinsethUtilization(timeMin, og) {
@@ -122,5 +126,46 @@ const Calc = {
   inRange(value, range) {
     if (!range) return null;
     return value >= range[0] && value <= range[1];
+  },
+
+  // ---- Batch stats (BeerSmith-parity additions) ----
+
+  // Gravity as it would read pre-boil, given the larger pre-boil volume. Same total
+  // gravity points as OG, just measured before boil-off concentrates them.
+  estimatePreBoilGravity(fermentables, preBoilVolGal, efficiencyPct) {
+    return this.estimateOG(fermentables, preBoilVolGal, efficiencyPct);
+  },
+
+  // Total fermentable weight (lb) per US barrel (31 US gallons) of finished beer.
+  poundsPerBarrel(totalFermentableLb, batchVolGal) {
+    if (!batchVolGal) return 0;
+    const barrels = batchVolGal / 31;
+    return barrels > 0 ? totalFermentableLb / barrels : 0;
+  },
+
+  // Classic strike water temperature formula (Palmer, How to Brew).
+  // ratioQtPerLb = mash water (quarts) / grain weight (lb). Temps in Fahrenheit.
+  strikeWaterTemp(grainTempF, targetMashTempF, ratioQtPerLb, equipAdjustF) {
+    if (!ratioQtPerLb) return targetMashTempF;
+    const base = (0.2 / ratioQtPerLb) * (targetMashTempF - grainTempF) + targetMashTempF;
+    return base + (equipAdjustF || 0);
+  },
+
+  // Total hardness (ppm as CaCO3) from calcium and magnesium.
+  effectiveHardness(profile) {
+    return 2.497 * (profile.Ca || 0) + 4.118 * (profile.Mg || 0);
+  },
+
+  // Raw (total) alkalinity as ppm CaCO3, from bicarbonate alone - distinct from residual alkalinity,
+  // which also nets out the buffering effect of calcium/magnesium.
+  alkalinityAsCaCO3(profile) {
+    return (profile.HCO3 || 0) * (50 / 61);
+  },
+
+  // % of total fermentable weight each item represents (BeerSmith's "Grain %" column).
+  grainPercent(fermentables) {
+    const total = fermentables.reduce((sum, f) => sum + (Number(f.amountLb) || 0), 0);
+    if (!total) return fermentables.map(() => 0);
+    return fermentables.map(f => ((Number(f.amountLb) || 0) / total) * 100);
   },
 };

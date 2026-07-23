@@ -8,6 +8,7 @@ let state = {
   batches: [],
   equipment: [],
   inventory: { fermentables: [], hops: [], yeast: [], misc: [] },
+  customIngredients: { fermentables: [], hops: [], yeast: [] },
   unitSystem: "metric", // NZ default. "us" is the alternative.
   activeSection: "recipes", // recipes | batches | inventory | equipment | tools
   activeId: null,
@@ -34,21 +35,29 @@ function newRecipe() {
     hops: [{ name: "Cascade", amountOz: 1, alphaPct: 6.0, timeMin: 60, use: "Boil", cost: 0 }],
     yeast: { name: "American Ale (Wyeast #1056)", type: "Ale", attenuation: 0.75, cost: 0 },
     misc: [],
-    waterVolGal: 6,
+    mashWaterVolGal: 4.5,
+    spargeWaterVolGal: 3,
     waterBaseName: "Custom",
     waterBase: { Ca: 50, Mg: 5, Na: 10, SO4: 30, Cl: 30, HCO3: 50 },
     waterSalts: [],
     waterTarget: "Balanced Pale Ale",
+    mashAcid: { type: ACID_TYPES[0], amountMl: 0 },
+    spargeAcid: { type: ACID_TYPES[0], amountMl: 0 },
     mashProfileName: "Single Infusion, Full Body",
     mashSteps: JSON.parse(JSON.stringify(MASH_PROFILES["Single Infusion, Full Body"])),
+    grainTempF: 68,
+    adjustTempForEquip: false,
+    carbProfileName: "American Ale",
     carbLevelVols: 2.4,
-    fermentationProfile: "Ferment at 20\u00b0C for 10-14 days, then condition 2 weeks.",
+    fermentationProfileName: "Standard Ale",
+    fermentationProfile: FERMENTATION_PROFILES["Standard Ale"],
+    preBoilVolGal: null, // null = auto-estimate from equipment/boil time
     notes: "",
   };
 }
 function newEquipment(preset) {
   const p = preset || EQUIPMENT_PRESETS[0];
-  return { id: uid(), name: p.name, batchVolGal: p.batchVolGal, boilTimeMin: p.boilTimeMin, boilOffRateGalHr: p.boilOffRateGalHr, trubLossGal: p.trubLossGal, mashEfficiencyPct: p.mashEfficiencyPct };
+  return { id: uid(), name: p.name, batchVolGal: p.batchVolGal, boilTimeMin: p.boilTimeMin, boilOffRateGalHr: p.boilOffRateGalHr, trubLossGal: p.trubLossGal, mashEfficiencyPct: p.mashEfficiencyPct, tempAdjustF: p.tempAdjustF != null ? p.tempAdjustF : 2 };
 }
 function newBatch(recipeId) {
   const r = state.recipes.find(x => x.id === recipeId);
@@ -76,6 +85,40 @@ function activeBatch() { return state.batches.find(b => b.id === state.activeBat
 function styleRef(name) { return STYLES.find(s => s.name === name); }
 function equipmentRef(id) { return state.equipment.find(e => e.id === id); }
 
+// ---- Migration: backfill fields for recipes saved under earlier schema versions ----
+function migrateRecipe(r) {
+  if (r.waterVolGal != null && r.mashWaterVolGal == null) {
+    r.mashWaterVolGal = r.waterVolGal;
+    r.spargeWaterVolGal = 0;
+    delete r.waterVolGal;
+  }
+  if (r.mashWaterVolGal == null) r.mashWaterVolGal = 4.5;
+  if (r.spargeWaterVolGal == null) r.spargeWaterVolGal = 3;
+  if (!r.mashAcid) r.mashAcid = { type: ACID_TYPES[0], amountMl: 0 };
+  if (!r.spargeAcid) r.spargeAcid = { type: ACID_TYPES[0], amountMl: 0 };
+  if (r.grainTempF == null) r.grainTempF = 68;
+  if (r.adjustTempForEquip == null) r.adjustTempForEquip = false;
+  if (!r.carbProfileName) r.carbProfileName = "Custom";
+  if (!r.fermentationProfileName) r.fermentationProfileName = "Custom";
+  if (r.preBoilVolGal === undefined) r.preBoilVolGal = null;
+  (r.waterSalts || []).forEach(s => { if (!s.use) s.use = "Mash"; });
+  return r;
+}
+
+// ---- Undo Last (single-level, per recipe - mirrors BeerSmith's "Undo Last") ----
+let undoSnapshot = null;
+function snapshotUndo(r) { undoSnapshot = { recipeId: r.id, data: JSON.parse(JSON.stringify(r)) }; }
+function undoLast() {
+  if (!undoSnapshot) { toast("Nothing to undo"); return; }
+  const idx = state.recipes.findIndex(x => x.id === undoSnapshot.recipeId);
+  if (idx === -1) { toast("Nothing to undo"); return; }
+  state.recipes[idx] = undoSnapshot.data;
+  if (state.activeId === undoSnapshot.recipeId) { /* stay on same recipe */ }
+  undoSnapshot = null;
+  saveToStorage(); renderAll();
+  toast("Undone");
+}
+
 // ---- Derived stats (self-contained ingredients, no external DB lookups needed) ----
 function computeDerived(r) {
   const ferms = r.fermentables.map(f => ({ amountLb: Number(f.amountLb) || 0, ppg: Number(f.ppg) || 0, srm: Number(f.color) || 0, mashable: f.mashable !== false }));
@@ -83,14 +126,45 @@ function computeDerived(r) {
   const fg = Calc.estimateFG(og, Number(r.yeast.attenuation) || 0.75);
   const abv = Calc.estimateABV(og, fg);
   const hopsForCalc = r.hops.map(h => ({ amountOz: Number(h.amountOz) || 0, alphaPct: Number(h.alphaPct) || 0, timeMin: Number(h.timeMin) || 0, use: h.use }));
-  const ibu = Calc.estimateIBU(hopsForCalc, Number(r.batchVolGal) || 1, og);
+  const ibuBreakdown = Calc.ibuBreakdown(hopsForCalc, Number(r.batchVolGal) || 1, og);
+  const ibu = ibuBreakdown.reduce((sum, v) => sum + v, 0);
   const srm = Calc.estimateSRM(ferms, Number(r.batchVolGal) || 1);
   const cost = Calc.totalCost([...r.fermentables, ...r.hops, r.yeast, ...r.misc]);
-  const added = Calc.saltAdditions(r.waterSalts.map(s => ({ name: s.name, grams: Number(s.grams) || 0 })), Number(r.waterVolGal) || 1);
-  const finalWater = Calc.addProfiles(r.waterBase, added);
+  const grainPercents = Calc.grainPercent(ferms);
+
+  const equip = equipmentRef(r.equipmentId);
+  const preBoilVolGal = r.preBoilVolGal || (Number(r.batchVolGal) || 0) + (equip ? equip.trubLossGal + (equip.boilOffRateGalHr * (r.boilTimeMin || 60) / 60) : (r.boilTimeMin || 60) / 60);
+  const preBoilGravity = Calc.estimatePreBoilGravity(ferms, preBoilVolGal, Number(r.efficiencyPct) || 70);
+  const totalFermentableLb = ferms.reduce((sum, f) => sum + f.amountLb, 0);
+  const poundsPerBarrel = Calc.poundsPerBarrel(totalFermentableLb, Number(r.batchVolGal) || 1);
+
+  // Water: mash and sparge salts are tracked separately; mash chemistry (RA, hardness,
+  // alkalinity, SO4:Cl) is calculated from the mash water only, since that's what affects
+  // mash pH - sparge water is shown separately for reference.
+  const mashSalts = r.waterSalts.filter(s => s.use !== "Sparge").map(s => ({ name: s.name, grams: Number(s.grams) || 0 }));
+  const spargeSalts = r.waterSalts.filter(s => s.use === "Sparge").map(s => ({ name: s.name, grams: Number(s.grams) || 0 }));
+  const mashAdded = Calc.saltAdditions(mashSalts, Number(r.mashWaterVolGal) || 1);
+  const spargeAdded = Calc.saltAdditions(spargeSalts, Number(r.spargeWaterVolGal) || 1);
+  const finalWater = Calc.addProfiles(r.waterBase, mashAdded);
+  const finalSpargeWater = Calc.addProfiles(r.waterBase, spargeAdded);
   const ra = Calc.residualAlkalinity(finalWater);
   const soCl = Calc.sulfateChlorideRatio(finalWater);
-  return { og, fg, abv, ibu, srm, cost, finalWater, ra, soCl };
+  const hardness = Calc.effectiveHardness(finalWater);
+  const alkalinity = Calc.alkalinityAsCaCO3(finalWater);
+
+  // Strike water temperature: ratio of mash water (quarts) to mashable grain weight (lb).
+  const mashableGrainLb = ferms.filter(f => f.mashable).reduce((sum, f) => sum + f.amountLb, 0);
+  const ratioQtPerLb = mashableGrainLb ? (Number(r.mashWaterVolGal) || 0) * 4 / mashableGrainLb : 0;
+  const targetMashTempF = (r.mashSteps[0] && r.mashSteps[0].temp) || 152;
+  const equipAdjust = r.adjustTempForEquip && equip ? equip.tempAdjustF : 0;
+  const strikeTempF = Calc.strikeWaterTemp(Number(r.grainTempF) || 68, targetMashTempF, ratioQtPerLb, equipAdjust);
+
+  return {
+    og, fg, abv, ibu, ibuBreakdown, srm, cost, grainPercents,
+    preBoilVolGal, preBoilGravity, poundsPerBarrel,
+    finalWater, finalSpargeWater, ra, soCl, hardness, alkalinity,
+    ratioQtPerLb, strikeTempF,
+  };
 }
 
 // ---- Toast & modal ----
@@ -153,7 +227,7 @@ function importFile(file) {
     try {
       const recipes = adapter.parse(reader.result);
       if (!recipes.length) { toast("No valid recipes found in file"); return; }
-      recipes.forEach(rec => { rec.id = uid(); state.recipes.push(rec); addLeafToRoot(rec.id); });
+      recipes.forEach(rec => { rec.id = uid(); migrateRecipe(rec); state.recipes.push(rec); addLeafToRoot(rec.id); });
       state.activeId = state.recipes[state.recipes.length - 1].id;
       state.activeSection = "recipes";
       saveToStorage(); renderAll();
@@ -175,15 +249,39 @@ function scaleRecipe(r) {
   if (input === null) return;
   const newDisplay = Number(input);
   if (!newDisplay || newDisplay <= 0) { toast("Enter a valid batch size"); return; }
+  snapshotUndo(r);
   const newVolGal = Units.toCanonical(newDisplay, "volume-gal", state.unitSystem);
   const ratio = newVolGal / r.batchVolGal;
   r.fermentables.forEach(f => f.amountLb = +(f.amountLb * ratio).toFixed(3));
   r.hops.forEach(h => h.amountOz = +(h.amountOz * ratio).toFixed(3));
   r.misc.forEach(m => m.amount = +(m.amount * ratio).toFixed(3));
-  r.waterVolGal = +(r.waterVolGal * ratio).toFixed(2);
+  r.mashWaterVolGal = +(r.mashWaterVolGal * ratio).toFixed(2);
+  r.spargeWaterVolGal = +(r.spargeWaterVolGal * ratio).toFixed(2);
   r.batchVolGal = +newVolGal.toFixed(2);
   saveToStorage(); renderAll();
   toast("Scaled to " + newDisplay + " " + label);
+}
+
+// ---- Update Prices: price each recipe line from matching inventory stock ----
+function updatePricesFromInventory(r) {
+  snapshotUndo(r);
+  let updated = 0;
+  r.fermentables.forEach(f => {
+    const item = state.inventory.fermentables.find(i => i.name.toLowerCase() === f.name.toLowerCase());
+    if (item) { f.cost = +(Units.lbToUnit(f.amountLb, item.unit) * item.cost).toFixed(2); updated++; }
+  });
+  r.hops.forEach(h => {
+    const item = state.inventory.hops.find(i => i.name.toLowerCase() === h.name.toLowerCase());
+    if (item) { h.cost = +(Units.lbToUnit(h.amountOz / 16, item.unit) * item.cost).toFixed(2); updated++; }
+  });
+  const yeastItem = state.inventory.yeast.find(i => i.name.toLowerCase() === r.yeast.name.toLowerCase());
+  if (yeastItem) { r.yeast.cost = +yeastItem.cost.toFixed(2); updated++; }
+  r.misc.forEach(m => {
+    const item = state.inventory.misc.find(i => i.name.toLowerCase() === m.name.toLowerCase());
+    if (item && item.unit === m.unit) { m.cost = +(m.amount * item.cost).toFixed(2); updated++; }
+  });
+  saveToStorage(); renderMain();
+  toast(updated ? "Updated pricing on " + updated + " line(s) from inventory" : "No matching inventory items found");
 }
 
 // ---- Sharing ----
@@ -223,7 +321,7 @@ async function checkIncomingShare() {
   const encoded = Share.readFromLocation();
   if (!encoded) return;
   try {
-    const incoming = await Share.decodeRecipe(encoded);
+    const incoming = migrateRecipe(await Share.decodeRecipe(encoded));
     const existing = state.recipes.find(x => x.id === incoming.id);
     const d = (() => { try { return computeDerived(incoming); } catch (e2) { return null; } })();
     showModal(
@@ -423,6 +521,8 @@ function renderRecipesMain(main) {
     '<div class="header-actions">' +
     '<button class="btn btn-sm" id="shareBtn">Share</button>' +
     '<button class="btn btn-sm" id="scaleBtn">Scale</button>' +
+    '<button class="btn btn-sm" id="updatePricesBtn">Update Prices</button>' +
+    '<button class="btn btn-sm" id="undoLastBtn">Undo Last</button>' +
     '<button class="btn btn-sm" id="dupBtn">Duplicate</button>' +
     '<button class="btn btn-sm" id="exportXmlBtn">Export BeerXML</button>' +
     '<button class="btn btn-sm" id="exportOneBtn">Export JSON</button>' +
@@ -434,6 +534,8 @@ function renderRecipesMain(main) {
   document.getElementById("recipeName").addEventListener("input", e => { r.name = e.target.value; saveToStorage(); renderSidebar(); });
   document.getElementById("shareBtn").addEventListener("click", () => shareRecipe(r));
   document.getElementById("scaleBtn").addEventListener("click", () => scaleRecipe(r));
+  document.getElementById("updatePricesBtn").addEventListener("click", () => updatePricesFromInventory(r));
+  document.getElementById("undoLastBtn").addEventListener("click", () => undoLast());
   document.getElementById("dupBtn").addEventListener("click", () => {
     const copy = JSON.parse(JSON.stringify(r)); copy.id = uid(); copy.name = r.name + " (copy)";
     state.recipes.push(copy);
@@ -484,7 +586,7 @@ function renderTabPanel(r, d, style) {
   const panel = document.getElementById("tabPanel");
   if (state.activeTab === "design") panel.innerHTML = designTabHtml(r, style);
   if (state.activeTab === "water") panel.innerHTML = waterTabHtml(r, d);
-  if (state.activeTab === "mash") panel.innerHTML = mashTabHtml(r);
+  if (state.activeTab === "mash") panel.innerHTML = mashTabHtml(r, d);
   if (state.activeTab === "history") panel.innerHTML = historyTabHtml(r);
   if (state.activeTab === "notes") panel.innerHTML = notesTabHtml(r);
   wireTabEvents(r);
@@ -495,33 +597,45 @@ function uVal(canonical, kind) { return +Units.toDisplay(canonical, kind, state.
 
 // ---- Design tab ----
 function designTabHtml(r, style) {
-  const fermOptions = FERMENTABLES.map(f => '<option value="' + escapeHtml(f.name) + '">').join("");
-  const hopOptions = HOPS.map(h => '<option value="' + escapeHtml(h.name) + '">').join("");
-  const yeastOptions = YEASTS.map(y => '<option value="' + escapeHtml(y.name) + '">').join("");
+  const d = computeDerived(r);
+  const fermLibrary = FERMENTABLES.concat(state.customIngredients.fermentables);
+  const hopLibrary = HOPS.concat(state.customIngredients.hops);
+  const yeastLibrary = YEASTS.concat(state.customIngredients.yeast);
+  function buildIngredientSelect(library, currentName) {
+    const names = library.map(x => x.name);
+    const known = names.includes(currentName);
+    let opts = "";
+    if (!known && currentName) opts += '<option value="' + escapeHtml(currentName) + '" selected>' + escapeHtml(currentName) + ' (custom)</option>';
+    opts += '<option value="__custom__">\u2014 Custom Name\u2026 \u2014</option>';
+    opts += library.map(x => '<option value="' + escapeHtml(x.name) + '" ' + (known && x.name === currentName ? "selected" : "") + '>' + escapeHtml(x.name) + '</option>').join("");
+    return opts;
+  }
   const equipOptions = state.equipment.map(e => '<option value="' + e.id + '" ' + (r.equipmentId === e.id ? "selected" : "") + '>' + escapeHtml(e.name) + '</option>').join("");
   const styleOptions = STYLES.map(s => '<option ' + (r.styleName === s.name ? "selected" : "") + '>' + s.name + '</option>').join("");
 
   const fermRows = r.fermentables.length ? r.fermentables.map((f, i) =>
     '<tr data-idx="' + i + '">' +
-    '<td><input list="fermListDL" data-tbl="fermentables" data-field="name" value="' + escapeHtml(f.name) + '"/></td>' +
+    '<td><select data-tbl="fermentables" data-field="name">' + buildIngredientSelect(fermLibrary, f.name) + '</select></td>' +
     '<td><input type="number" step="0.1" data-tbl="fermentables" data-field="amountLb" data-unitkind="weight-lb" value="' + uVal(f.amountLb, "weight-lb") + '"/></td>' +
     '<td><select data-tbl="fermentables" data-field="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (f.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
     '<td><input type="number" step="0.5" data-tbl="fermentables" data-field="ppg" value="' + f.ppg + '"/></td>' +
     '<td><input type="number" step="0.5" data-tbl="fermentables" data-field="color" value="' + f.color + '"/></td>' +
+    '<td class="num grist-pct">' + (d.grainPercents[i] || 0).toFixed(1) + '%</td>' +
     '<td><input type="number" step="0.01" data-tbl="fermentables" data-field="cost" value="' + (f.cost || 0) + '"/></td>' +
-    '<td><button class="del-btn" data-del="fermentables">\u2715</button></td></tr>'
-  ).join("") : '<tr class="empty-row"><td colspan="7">No fermentables yet</td></tr>';
+    '<td class="row-actions"><button class="btn btn-sm" data-substitute="fermentables">Sub</button><button class="btn btn-sm" data-save-item="fermentables">Save</button><button class="del-btn" data-del="fermentables">\u2715</button></td></tr>'
+  ).join("") : '<tr class="empty-row"><td colspan="8">No fermentables yet</td></tr>';
 
   const hopRows = r.hops.length ? r.hops.map((h, i) =>
     '<tr data-idx="' + i + '">' +
-    '<td><input list="hopListDL" data-tbl="hops" data-field="name" value="' + escapeHtml(h.name) + '"/></td>' +
+    '<td><select data-tbl="hops" data-field="name">' + buildIngredientSelect(hopLibrary, h.name) + '</select></td>' +
     '<td><input type="number" step="0.1" data-tbl="hops" data-field="amountOz" data-unitkind="weight-oz" value="' + uVal(h.amountOz, "weight-oz") + '"/></td>' +
     '<td><input type="number" step="0.1" data-tbl="hops" data-field="alphaPct" value="' + h.alphaPct + '"/></td>' +
     '<td><input type="number" step="1" data-tbl="hops" data-field="timeMin" value="' + h.timeMin + '"/></td>' +
     '<td><select data-tbl="hops" data-field="use">' + ["Boil", "Whirlpool", "Dry Hop"].map(u => '<option ' + (h.use === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
+    '<td class="num hop-ibu">' + (d.ibuBreakdown[i] || 0).toFixed(1) + '</td>' +
     '<td><input type="number" step="0.01" data-tbl="hops" data-field="cost" value="' + (h.cost || 0) + '"/></td>' +
-    '<td><button class="del-btn" data-del="hops">\u2715</button></td></tr>'
-  ).join("") : '<tr class="empty-row"><td colspan="7">No hops yet</td></tr>';
+    '<td class="row-actions"><button class="btn btn-sm" data-substitute="hops">Sub</button><button class="btn btn-sm" data-save-item="hops">Save</button><button class="del-btn" data-del="hops">\u2715</button></td></tr>'
+  ).join("") : '<tr class="empty-row"><td colspan="8">No hops yet</td></tr>';
 
   const miscRows = r.misc.length ? r.misc.map((m, i) =>
     '<tr data-idx="' + i + '">' +
@@ -534,9 +648,6 @@ function designTabHtml(r, style) {
   ).join("") : '<tr class="empty-row"><td colspan="6">Nothing added</td></tr>';
 
   return (
-    '<datalist id="fermListDL">' + fermOptions + '</datalist>' +
-    '<datalist id="hopListDL">' + hopOptions + '</datalist>' +
-    '<datalist id="yeastListDL">' + yeastOptions + '</datalist>' +
     '<div class="card"><h3>General</h3><div class="field-grid">' +
     '<div class="field"><label>Brewer</label><input data-field="brewer" value="' + escapeHtml(r.brewer) + '"/></div>' +
     '<div class="field"><label>Type</label><select data-field="type">' + ["All Grain", "Extract", "Partial Mash", "BIAB"].map(t => '<option ' + (r.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></div>' +
@@ -547,16 +658,23 @@ function designTabHtml(r, style) {
     '<div class="field"><label>Style</label><select data-field="styleName">' + styleOptions + '</select></div>' +
     '</div></div>' +
     '<div class="card"><h3>Fermentables <button class="btn btn-sm" data-action="addFermentable">+ Add Fermentable</button></h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:26%">Name</th><th>Amount (' + uLabel("weight-lb") + ')</th><th>Type</th><th>PPG</th><th>Colour (SRM)</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + fermRows + '</tbody></table></div>' +
+    '<table class="ing-table"><thead><tr><th style="width:22%">Name</th><th>Amount (' + uLabel("weight-lb") + ')</th><th>Type</th><th>PPG</th><th>Colour (SRM)</th><th>% Grist</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + fermRows + '</tbody></table></div>' +
     '<div class="card"><h3>Hops <button class="btn btn-sm" data-action="addHop">+ Add Hop</button></h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:22%">Name</th><th>Amount (' + uLabel("weight-oz") + ')</th><th>Alpha %</th><th>Time (min)</th><th>Use</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + hopRows + '</tbody></table></div>' +
-    '<div class="card"><h3>Yeast</h3><div class="field-grid">' +
-    '<div class="field"><label>Strain</label><input list="yeastListDL" data-field="yeastName" value="' + escapeHtml(r.yeast.name) + '"/></div>' +
+    '<table class="ing-table"><thead><tr><th style="width:18%">Name</th><th>Amount (' + uLabel("weight-oz") + ')</th><th>Alpha %</th><th>Time (min)</th><th>Use</th><th>IBU</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + hopRows + '</tbody></table></div>' +
+    '<div class="card"><h3>Yeast <span><button class="btn btn-sm" data-substitute="yeast">Substitute</button> <button class="btn btn-sm" data-save-item="yeast">Save Item</button></span></h3><div class="field-grid">' +
+    '<div class="field"><label>Strain</label><select data-field="yeastName">' + buildIngredientSelect(yeastLibrary, r.yeast.name) + '</select></div>' +
     '<div class="field"><label>Attenuation (%)</label><input type="number" step="1" data-field="yeastAttenuation" value="' + (r.yeast.attenuation * 100).toFixed(0) + '"/></div>' +
     '<div class="field"><label>Cost ($)</label><input type="number" step="0.01" data-field="yeastCost" value="' + (r.yeast.cost || 0) + '"/></div>' +
     '</div></div>' +
     '<div class="card"><h3>Misc / Fining Agents <button class="btn btn-sm" data-action="addMisc">+ Add Item</button></h3>' +
     '<table class="ing-table"><thead><tr><th style="width:34%">Name</th><th>Amount</th><th>Unit</th><th>Use</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + miscRows + '</tbody></table></div>' +
+    '<div class="card"><h3>Cost & Batch Stats</h3><div class="field-grid">' +
+    '<div class="field"><label>Pre-Boil Volume (' + uLabel("volume-gal") + ', blank = auto)</label><input type="number" step="0.1" data-field="preBoilVolGal" data-unitkind="volume-gal" value="' + (r.preBoilVolGal ? uVal(r.preBoilVolGal, "volume-gal") : "") + '" placeholder="' + uVal(d.preBoilVolGal, "volume-gal").toFixed(2) + '"/></div>' +
+    '</div>' +
+    '<div class="stat-row"><span class="stat-label">Pre-Boil Gravity</span><span class="stat-value preboil-gravity">' + d.preBoilGravity.toFixed(3) + ' (at ' + uVal(d.preBoilVolGal, "volume-gal").toFixed(2) + ' ' + uLabel("volume-gal") + ')</span></div>' +
+    '<div class="stat-row"><span class="stat-label">' + (uLabel("weight-lb") === "kg" ? "Kilograms" : "Pounds") + ' per Barrel</span><span class="stat-value lb-per-barrel">' + uVal(d.poundsPerBarrel, "weight-lb").toFixed(2) + '</span></div>' +
+    '<div class="stat-row"><span class="stat-label">Total Recipe Cost</span><span class="stat-value total-cost">$' + d.cost.toFixed(2) + '</span></div>' +
+    '</div>' +
     '<div class="card"><h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p style="color:var(--ink-faint);font-size:13px;">Pick a style above to compare.</p>') + '</div>'
   );
 }
@@ -596,28 +714,40 @@ function waterTabHtml(r, d) {
   const saltRows = r.waterSalts.length ? r.waterSalts.map((s, i) =>
     '<tr data-idx="' + i + '"><td><select data-tbl="waterSalts" data-field="name">' + Object.keys(WATER_SALTS).map(name => '<option ' + (s.name === name ? "selected" : "") + '>' + name + '</option>').join("") + '</select></td>' +
     '<td><input type="number" step="0.1" data-tbl="waterSalts" data-field="grams" value="' + s.grams + '"/></td>' +
+    '<td><select data-tbl="waterSalts" data-field="use">' + ["Mash", "Sparge"].map(u => '<option ' + ((s.use || "Mash") === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
     '<td><button class="del-btn" data-del="waterSalts">\u2715</button></td></tr>'
-  ).join("") : '<tr class="empty-row"><td colspan="3">No salt additions</td></tr>';
+  ).join("") : '<tr class="empty-row"><td colspan="4">No salt additions</td></tr>';
+  const acidTypeOptions = sel => ACID_TYPES.map(a => '<option ' + (sel === a ? "selected" : "") + '>' + a + '</option>').join("");
 
   return (
     '<div class="card"><h3>Base Water Profile</h3><div class="field-grid">' +
     '<div class="field"><label>Source Name</label><input data-field="waterBaseName" value="' + escapeHtml(r.waterBaseName) + '"/></div>' +
-    '<div class="field"><label>Volume (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="waterVolGal" data-unitkind="volume-gal" value="' + uVal(r.waterVolGal, "volume-gal") + '"/></div>' +
+    '<div class="field"><label>Mash Water (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="mashWaterVolGal" data-unitkind="volume-gal" value="' + uVal(r.mashWaterVolGal, "volume-gal") + '"/></div>' +
+    '<div class="field"><label>Sparge Water (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="spargeWaterVolGal" data-unitkind="volume-gal" value="' + uVal(r.spargeWaterVolGal, "volume-gal") + '"/></div>' +
+    '<div class="field"><label>Total Water Needed</label><input disabled value="' + (uVal(r.mashWaterVolGal, "volume-gal") + uVal(r.spargeWaterVolGal, "volume-gal")).toFixed(2) + ' ' + uLabel("volume-gal") + '"/></div>' +
     '</div><div class="ion-grid" style="margin-top:14px;">' + ionInputs + '</div></div>' +
     '<div class="card"><h3>Mash & Sparge Water Agents<span><select id="targetProfileSelect" class="btn btn-sm">' + targetOptions + '</select>' +
     '<button class="btn btn-sm" data-action="addSalt">+ Add Salt</button></span></h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:40%">Salt</th><th>Amount (g)</th><th></th></tr></thead><tbody>' + saltRows + '</tbody></table></div>' +
+    '<table class="ing-table"><thead><tr><th style="width:36%">Salt</th><th>Amount (g)</th><th>Use</th><th></th></tr></thead><tbody>' + saltRows + '</tbody></table></div>' +
+    '<div class="card"><h3>Acid Additions</h3><div class="field-grid">' +
+    '<div class="field"><label>Mash Acid</label><select data-field="mashAcid.type">' + acidTypeOptions(r.mashAcid.type) + '</select></div>' +
+    '<div class="field"><label>Mash Acid Amount (mL)</label><input type="number" step="0.1" data-field="mashAcid.amountMl" value="' + r.mashAcid.amountMl + '"/></div>' +
+    '<div class="field"><label>Sparge Acid</label><select data-field="spargeAcid.type">' + acidTypeOptions(r.spargeAcid.type) + '</select></div>' +
+    '<div class="field"><label>Sparge Acid Amount (mL)</label><input type="number" step="0.1" data-field="spargeAcid.amountMl" value="' + r.spargeAcid.amountMl + '"/></div>' +
+    '</div><p style="color:var(--ink-faint);font-size:12px;margin:10px 0 0;">Tracked for reference only \u2014 not currently factored into the residual alkalinity estimate below (proper mash pH prediction needs a grain-acidity model beyond what Hops calculates).</p></div>' +
     '<div class="card"><h3>Adjusted Mash Water Profile</h3><div class="ion-grid">' + adjustedIons + '</div></div>' +
-    '<div class="card"><h3>Water Analysis</h3>' +
-    '<div class="stat-row"><span class="stat-label">Residual Alkalinity</span><span class="stat-value">' + d.ra.toFixed(1) + ' ppm as CaCO3</span></div>' +
-    '<div class="stat-row"><span class="stat-label">Sulfate : Chloride Ratio</span><span class="stat-value">' + (isFinite(d.soCl) ? d.soCl.toFixed(2) : "\u2014") + ' (' + soClDescription(d.soCl) + ')</span></div>' +
+    '<div class="card"><h3>Water Analysis (Mash Water)</h3>' +
+    '<div class="stat-row"><span class="stat-label">Residual Alkalinity</span><span class="stat-value stat-ra">' + d.ra.toFixed(1) + ' ppm as CaCO3</span></div>' +
+    '<div class="stat-row"><span class="stat-label">Alkalinity</span><span class="stat-value stat-alk">' + d.alkalinity.toFixed(1) + ' ppm as CaCO3</span></div>' +
+    '<div class="stat-row"><span class="stat-label">Effective Hardness</span><span class="stat-value stat-hardness">' + d.hardness.toFixed(1) + ' ppm as CaCO3</span></div>' +
+    '<div class="stat-row"><span class="stat-label">Sulfate : Chloride Ratio</span><span class="stat-value stat-socl">' + (isFinite(d.soCl) ? d.soCl.toFixed(2) : "\u2014") + ' (' + soClDescription(d.soCl) + ')</span></div>' +
     '</div>'
   );
 }
 function soClDescription(ratio) { if (!isFinite(ratio)) return "sulfate only"; if (ratio < 0.6) return "malty"; if (ratio <= 1.5) return "balanced"; return "hoppy / crisp"; }
 
 // ---- Mash & Ferment tab ----
-function mashTabHtml(r) {
+function mashTabHtml(r, d) {
   const steps = r.mashSteps.map((s, i) =>
     '<div class="mash-step" data-idx="' + i + '">' +
     '<input data-tbl="mashSteps" data-field="name" value="' + escapeHtml(s.name) + '"/>' +
@@ -626,11 +756,26 @@ function mashTabHtml(r) {
     '<button class="del-btn" data-del="mashSteps">\u2715</button></div>'
   ).join("");
   const profileOptions = Object.keys(MASH_PROFILES).map(k => '<option ' + (r.mashProfileName === k ? "selected" : "") + '>' + k + '</option>').join("");
+  const carbOptions = '<option ' + (r.carbProfileName === "Custom" ? "selected" : "") + '>Custom</option>' + Object.keys(CARBONATION_PROFILES).map(k => '<option ' + (r.carbProfileName === k ? "selected" : "") + '>' + k + '</option>').join("");
+  const fermOptions = '<option ' + (r.fermentationProfileName === "Custom" ? "selected" : "") + '>Custom</option>' + Object.keys(FERMENTATION_PROFILES).map(k => '<option ' + (r.fermentationProfileName === k ? "selected" : "") + '>' + k + '</option>').join("");
+  const equip = equipmentRef(r.equipmentId);
   return (
     '<div class="card"><h3>Mash Profile</h3><div class="field-grid"><div class="field"><label>Profile</label><select data-field="mashProfileName">' + profileOptions + '</select></div></div>' +
     '<div style="margin-top:16px;">' + steps + '<button class="btn btn-sm add-row-btn" data-action="addMashStep">+ Add Mash Step</button></div></div>' +
-    '<div class="card"><h3>Carbonation</h3><div class="field-grid"><div class="field"><label>Target Volumes CO2</label><input type="number" step="0.1" data-field="carbLevelVols" value="' + r.carbLevelVols + '"/></div></div></div>' +
-    '<div class="card"><h3>Fermentation Profile</h3><textarea class="notes-area" style="min-height:80px;" data-field="fermentationProfile">' + escapeHtml(r.fermentationProfile) + '</textarea></div>'
+    '<div class="card"><h3>Strike Water</h3><div class="field-grid">' +
+    '<div class="field"><label>Grain Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" data-field="grainTempF" data-unitkind="temp-f" value="' + uVal(r.grainTempF, "temp-f") + '"/></div>' +
+    '<div class="field" style="display:flex; align-items:flex-end; gap:6px; padding-bottom:6px;"><label style="display:flex; align-items:center; gap:6px; margin:0; text-transform:none; font-size:13px; color:var(--ink);"><input type="checkbox" id="adjustTempForEquip" ' + (r.adjustTempForEquip ? "checked" : "") + ' ' + (equip ? "" : "disabled") + ' style="width:auto;"/> Adjust Temp for Equipment</label></div>' +
+    '</div>' +
+    (equip ? "" : '<p style="color:var(--ink-faint);font-size:12px;margin:6px 0 0;">Link an Equipment Profile on the Design tab to enable the equipment thermal-mass adjustment.</p>') +
+    '<div class="stat-row" style="margin-top:8px;"><span class="stat-label">Water : Grain Ratio</span><span class="stat-value stat-ratio">' + d.ratioQtPerLb.toFixed(2) + ' qt/lb</span></div>' +
+    '<div class="stat-row"><span class="stat-label">Calculated Strike Temp</span><span class="stat-value stat-striketemp">' + uVal(d.strikeTempF, "temp-f").toFixed(1) + ' ' + uLabel("temp-f") + '</span></div>' +
+    '</div>' +
+    '<div class="card"><h3>Carbonation</h3><div class="field-grid">' +
+    '<div class="field"><label>Profile</label><select data-field="carbProfileName">' + carbOptions + '</select></div>' +
+    '<div class="field"><label>Target Volumes CO2</label><input type="number" step="0.1" data-field="carbLevelVols" value="' + r.carbLevelVols + '"/></div>' +
+    '</div></div>' +
+    '<div class="card"><h3>Fermentation Profile</h3><div class="field-grid"><div class="field"><label>Profile</label><select data-field="fermentationProfileName">' + fermOptions + '</select></div></div>' +
+    '<textarea class="notes-area" style="min-height:80px; margin-top:10px;" data-field="fermentationProfile">' + escapeHtml(r.fermentationProfile) + '</textarea></div>'
   );
 }
 function notesTabHtml(r) { return '<div class="card"><h3>Brewing Notes</h3><textarea class="notes-area" data-field="notes" placeholder="Tasting notes, process changes, next-batch ideas...">' + escapeHtml(r.notes) + '</textarea></div>'; }
@@ -657,6 +802,7 @@ function wireTabEvents(r) {
   const panel = document.getElementById("tabPanel");
   panel.querySelectorAll("[data-field]").forEach(el => {
     if (el.closest("[data-tbl]")) return;
+    if (el.dataset.field === "preBoilVolGal") return; // handled specially below (empty = auto)
     el.addEventListener("input", () => {
       const path = el.dataset.field;
       let val = el.type === "number" ? Number(el.value) : el.value;
@@ -664,18 +810,28 @@ function wireTabEvents(r) {
       setField(r, path, val); saveToStorage(); refreshComputed(r);
     });
   });
+  const preBoilEl = panel.querySelector('[data-field="preBoilVolGal"]');
+  if (preBoilEl) preBoilEl.addEventListener("input", () => {
+    r.preBoilVolGal = preBoilEl.value === "" ? null : Units.toCanonical(Number(preBoilEl.value), "volume-gal", state.unitSystem);
+    saveToStorage(); refreshComputed(r);
+  });
   panel.querySelectorAll("[data-tbl][data-field]").forEach(el => {
     el.addEventListener("input", () => {
       const tbl = el.dataset.tbl, idx = Number(el.closest("[data-idx]").dataset.idx), field = el.dataset.field;
       let val = el.type === "number" ? Number(el.value) : el.value;
       if (el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
+      if (field === "name" && val === "__custom__") {
+        const name = window.prompt("Name for this custom " + (tbl === "fermentables" ? "fermentable" : "hop") + ":", r[tbl][idx].name);
+        if (!name) { renderMain(); return; } // cancelled - re-render to reset the select back to its previous value
+        val = name;
+      }
       r[tbl][idx][field] = val;
       if (field === "name" && tbl === "fermentables") {
-        const match = FERMENTABLES.find(f => f.name.toLowerCase() === String(val).toLowerCase());
-        if (match) { r.fermentables[idx].ppg = match.ppg; r.fermentables[idx].color = match.srm; r.fermentables[idx].type = match.type; r.fermentables[idx].mashable = match.mashable; }
+        const match = FERMENTABLES.concat(state.customIngredients.fermentables).find(f => f.name.toLowerCase() === String(val).toLowerCase());
+        if (match) { r.fermentables[idx].ppg = match.ppg; r.fermentables[idx].color = match.srm != null ? match.srm : match.color; r.fermentables[idx].type = match.type; r.fermentables[idx].mashable = match.mashable; }
       }
       if (field === "name" && tbl === "hops") {
-        const match = HOPS.find(h => h.name.toLowerCase() === String(val).toLowerCase());
+        const match = HOPS.concat(state.customIngredients.hops).find(h => h.name.toLowerCase() === String(val).toLowerCase());
         if (match) r.hops[idx].alphaPct = match.alpha;
       }
       saveToStorage();
@@ -699,11 +855,17 @@ function wireTabEvents(r) {
 
   const yeastName = panel.querySelector('[data-field="yeastName"]');
   if (yeastName) yeastName.addEventListener("input", () => {
-    r.yeast.name = yeastName.value;
-    const match = YEASTS.find(y => y.name.toLowerCase() === yeastName.value.toLowerCase());
+    let val = yeastName.value;
+    if (val === "__custom__") {
+      const name = window.prompt("Name for this custom yeast strain:", r.yeast.name);
+      if (!name) { renderMain(); return; }
+      val = name;
+    }
+    r.yeast.name = val;
+    const match = YEASTS.concat(state.customIngredients.yeast).find(y => y.name.toLowerCase() === val.toLowerCase());
     if (match) { r.yeast.attenuation = match.attenuation; r.yeast.type = match.type; }
     saveToStorage();
-    if (match) renderMain(); else refreshComputed(r);
+    renderMain();
   });
   const yeastAtt = panel.querySelector('[data-field="yeastAttenuation"]');
   if (yeastAtt) yeastAtt.addEventListener("input", () => { r.yeast.attenuation = Number(yeastAtt.value) / 100; saveToStorage(); refreshComputed(r); });
@@ -714,7 +876,7 @@ function wireTabEvents(r) {
   if (equipSel) equipSel.addEventListener("change", () => {
     r.equipmentId = equipSel.value || null;
     const eq = equipmentRef(r.equipmentId);
-    if (eq) { r.batchVolGal = eq.batchVolGal; r.boilTimeMin = eq.boilTimeMin; r.efficiencyPct = eq.mashEfficiencyPct; r.waterVolGal = eq.batchVolGal + eq.trubLossGal + (eq.boilOffRateGalHr * eq.boilTimeMin / 60); }
+    if (eq) { r.batchVolGal = eq.batchVolGal; r.boilTimeMin = eq.boilTimeMin; r.efficiencyPct = eq.mashEfficiencyPct; r.spargeWaterVolGal = eq.trubLossGal + (eq.boilOffRateGalHr * eq.boilTimeMin / 60); }
     saveToStorage(); renderMain();
     if (eq) toast('Applied "' + eq.name + '" equipment defaults');
   });
@@ -724,6 +886,81 @@ function wireTabEvents(r) {
   if (mashProfileSel) mashProfileSel.addEventListener("change", () => { r.mashProfileName = mashProfileSel.value; r.mashSteps = JSON.parse(JSON.stringify(MASH_PROFILES[r.mashProfileName])); saveToStorage(); renderMain(); });
   const targetSel = document.getElementById("targetProfileSelect");
   if (targetSel) targetSel.addEventListener("change", () => { r.waterTarget = targetSel.value; r.waterSalts = []; r.waterBase = Object.assign({}, WATER_TARGET_PROFILES[targetSel.value]); saveToStorage(); renderMain(); toast("Matched to " + targetSel.value + " profile"); });
+
+  const adjustEquipCb = panel.querySelector("#adjustTempForEquip");
+  if (adjustEquipCb) adjustEquipCb.addEventListener("change", () => { r.adjustTempForEquip = adjustEquipCb.checked; saveToStorage(); renderMain(); });
+  const carbSel = panel.querySelector('[data-field="carbProfileName"]');
+  if (carbSel) carbSel.addEventListener("change", () => {
+    r.carbProfileName = carbSel.value;
+    if (CARBONATION_PROFILES[carbSel.value] != null) r.carbLevelVols = CARBONATION_PROFILES[carbSel.value];
+    saveToStorage(); renderMain();
+  });
+  const fermProfileSel = panel.querySelector('[data-field="fermentationProfileName"]');
+  if (fermProfileSel) fermProfileSel.addEventListener("change", () => {
+    r.fermentationProfileName = fermProfileSel.value;
+    if (FERMENTATION_PROFILES[fermProfileSel.value]) r.fermentationProfile = FERMENTATION_PROFILES[fermProfileSel.value];
+    saveToStorage(); renderMain();
+  });
+
+  // ---- Substitute & Save Item (personal ingredient library) ----
+  panel.querySelectorAll("[data-substitute]").forEach(btn => btn.addEventListener("click", e => {
+    e.stopPropagation();
+    openSubstitutePicker(e, btn.dataset.substitute, btn.closest("[data-idx]"), r);
+  }));
+  panel.querySelectorAll("[data-save-item]").forEach(btn => btn.addEventListener("click", () => {
+    saveItemToLibrary(btn.dataset.saveItem, btn.closest("[data-idx]"), r);
+  }));
+}
+
+function openSubstitutePicker(e, kind, rowEl, r) {
+  let library, applyFn;
+  if (kind === "fermentables") {
+    library = FERMENTABLES.concat(state.customIngredients.fermentables);
+    applyFn = (item) => {
+      const idx = Number(rowEl.dataset.idx);
+      snapshotUndo(r);
+      Object.assign(r.fermentables[idx], { name: item.name, ppg: item.ppg, color: item.srm != null ? item.srm : item.color, type: item.type, mashable: item.mashable });
+      saveToStorage(); renderMain(); toast("Substituted " + item.name);
+    };
+  } else if (kind === "hops") {
+    library = HOPS.concat(state.customIngredients.hops);
+    applyFn = (item) => {
+      const idx = Number(rowEl.dataset.idx);
+      snapshotUndo(r);
+      r.hops[idx].name = item.name; r.hops[idx].alphaPct = item.alpha;
+      saveToStorage(); renderMain(); toast("Substituted " + item.name);
+    };
+  } else {
+    library = YEASTS.concat(state.customIngredients.yeast);
+    applyFn = (item) => {
+      snapshotUndo(r);
+      r.yeast.name = item.name; r.yeast.attenuation = item.attenuation; r.yeast.type = item.type;
+      saveToStorage(); renderMain(); toast("Substituted " + item.name);
+    };
+  }
+  const items = library.map(item => ({ label: item.name, action: () => applyFn(item) }));
+  showContextMenu(e.clientX, e.clientY, items.length ? items : [{ label: "No ingredients available", action: () => {} }]);
+}
+
+function saveItemToLibrary(kind, rowEl, r) {
+  let entry;
+  if (kind === "fermentables") {
+    const idx = Number(rowEl.dataset.idx);
+    const f = r.fermentables[idx];
+    entry = { name: f.name, type: f.type, ppg: f.ppg, srm: f.color, mashable: f.mashable };
+  } else if (kind === "hops") {
+    const idx = Number(rowEl.dataset.idx);
+    const h = r.hops[idx];
+    entry = { name: h.name, alpha: h.alphaPct };
+  } else {
+    entry = { name: r.yeast.name, type: r.yeast.type, attenuation: r.yeast.attenuation };
+  }
+  if (!entry.name) { toast("Give it a name first"); return; }
+  const list = state.customIngredients[kind];
+  const existingIdx = list.findIndex(x => x.name.toLowerCase() === entry.name.toLowerCase());
+  if (existingIdx !== -1) list[existingIdx] = entry; else list.push(entry);
+  saveToStorage();
+  toast('Saved "' + entry.name + '" to your ingredient library');
 }
 
 function setField(r, path, val) { if (path.indexOf(".") !== -1) { const parts = path.split("."); r[parts[0]][parts[1]] = val; } else r[path] = val; }
@@ -733,16 +970,33 @@ function refreshComputed(r) {
   const style = styleRef(r.styleName);
   const stripHolder = document.querySelector(".gauge-strip");
   if (stripHolder) stripHolder.outerHTML = renderGaugeStrip(d, style);
+
   if (state.activeTab === "design") {
     const headers = Array.from(document.querySelectorAll(".card h3")).filter(h => h.textContent.indexOf("Style Guide") === 0);
     if (headers[0]) headers[0].closest(".card").innerHTML = '<h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p style="color:var(--ink-faint);font-size:13px;">Pick a style above to compare.</p>');
+    document.querySelectorAll(".grist-pct").forEach((el, i) => { if (d.grainPercents[i] != null) el.textContent = d.grainPercents[i].toFixed(1) + "%"; });
+    document.querySelectorAll(".hop-ibu").forEach((el, i) => { if (d.ibuBreakdown[i] != null) el.textContent = d.ibuBreakdown[i].toFixed(1); });
+    const preBoil = document.querySelector(".preboil-gravity");
+    if (preBoil) preBoil.textContent = d.preBoilGravity.toFixed(3) + " (at " + uVal(d.preBoilVolGal, "volume-gal").toFixed(2) + " " + uLabel("volume-gal") + ")";
+    const lbBbl = document.querySelector(".lb-per-barrel");
+    if (lbBbl) lbBbl.textContent = uVal(d.poundsPerBarrel, "weight-lb").toFixed(2);
+    const totalCost = document.querySelector(".total-cost");
+    if (totalCost) totalCost.textContent = "$" + d.cost.toFixed(2);
   }
+
   if (state.activeTab === "water") {
     document.querySelectorAll(".ion-value").forEach((el, i) => { const ion = ["Ca", "Mg", "Na", "SO4", "Cl", "HCO3"][i]; if (ion) el.textContent = Math.round(d.finalWater[ion]); });
-    const stats = document.querySelectorAll(".stat-value");
-    if (stats[0]) stats[0].textContent = d.ra.toFixed(1) + " ppm as CaCO3";
-    if (stats[1]) stats[1].textContent = (isFinite(d.soCl) ? d.soCl.toFixed(2) : "\u2014") + " (" + soClDescription(d.soCl) + ")";
+    const ra = document.querySelector(".stat-ra"); if (ra) ra.textContent = d.ra.toFixed(1) + " ppm as CaCO3";
+    const alk = document.querySelector(".stat-alk"); if (alk) alk.textContent = d.alkalinity.toFixed(1) + " ppm as CaCO3";
+    const hard = document.querySelector(".stat-hardness"); if (hard) hard.textContent = d.hardness.toFixed(1) + " ppm as CaCO3";
+    const soCl = document.querySelector(".stat-socl"); if (soCl) soCl.textContent = (isFinite(d.soCl) ? d.soCl.toFixed(2) : "\u2014") + " (" + soClDescription(d.soCl) + ")";
   }
+
+  if (state.activeTab === "mash") {
+    const ratio = document.querySelector(".stat-ratio"); if (ratio) ratio.textContent = d.ratioQtPerLb.toFixed(2) + " qt/lb";
+    const strike = document.querySelector(".stat-striketemp"); if (strike) strike.textContent = uVal(d.strikeTempF, "temp-f").toFixed(1) + " " + uLabel("temp-f");
+  }
+
   renderSidebar();
 }
 
@@ -933,7 +1187,10 @@ function init() {
   if (!state.equipment) state.equipment = [];
   if (!state.batches) state.batches = [];
   if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
+  if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
   if (!state.unitSystem) state.unitSystem = "metric";
+  state.recipes.forEach(migrateRecipe);
+  state.equipment.forEach(e => { if (e.tempAdjustF == null) e.tempAdjustF = 2; });
   Tree.pruneOrphans(state.tree, new Set(state.recipes.map(r => r.id)));
   saveToStorage();
   renderAll();
@@ -945,6 +1202,16 @@ function init() {
   document.getElementById("exportAllBtn").addEventListener("click", exportAll);
   document.getElementById("importInput").addEventListener("change", e => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ""; });
   document.getElementById("unitToggleBtn").addEventListener("click", () => { state.unitSystem = state.unitSystem === "metric" ? "us" : "metric"; saveToStorage(); updateUnitToggleLabel(); renderAll(); });
+
+  // Mobile hamburger drawer
+  const sidebarToggle = document.getElementById("sidebarToggle");
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (sidebarToggle) sidebarToggle.addEventListener("click", () => { sidebar.classList.add("open"); backdrop.classList.add("open"); });
+  if (backdrop) backdrop.addEventListener("click", () => { sidebar.classList.remove("open"); backdrop.classList.remove("open"); });
+  document.getElementById("recipeList").addEventListener("click", () => {
+    if (window.innerWidth <= 860) { sidebar.classList.remove("open"); backdrop.classList.remove("open"); }
+  });
 }
 function updateUnitToggleLabel() { document.getElementById("unitToggleBtn").textContent = state.unitSystem === "metric" ? "Units: Metric" : "Units: Imperial"; }
 

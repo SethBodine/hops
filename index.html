@@ -56,21 +56,5 @@
 <script src="share.js"></script>
 <script src="importers.js"></script>
 <script src="app.js"></script>
-<script>
-  document.getElementById("sidebarToggle").addEventListener("click", () => {
-    document.getElementById("sidebar").classList.add("open");
-    document.getElementById("sidebarBackdrop").classList.add("open");
-  });
-  document.getElementById("sidebarBackdrop").addEventListener("click", () => {
-    document.getElementById("sidebar").classList.remove("open");
-    document.getElementById("sidebarBackdrop").classList.remove("open");
-  });
-  document.getElementById("recipeList").addEventListener("click", () => {
-    if (window.innerWidth <= 860) {
-      document.getElementById("sidebar").classList.remove("open");
-      document.getElementById("sidebarBackdrop").classList.remove("open");
-    }
-  });
-</script>
 </body>
 </html>
