@@ -80,6 +80,15 @@ function loadFromStorage() {
   return false;
 }
 
+function nodeDisplayName(node) {
+  if (node.type === "folder") return node.name;
+  const r = state.recipes.find(x => x.id === node.recipeId);
+  return r ? r.name : null;
+}
+function uniqueSiblingName(parentNode, type, desiredName, excludeId) {
+  return Tree.uniqueSiblingName(parentNode, type, desiredName, nodeDisplayName, excludeId);
+}
+
 function activeRecipe() { return state.recipes.find(r => r.id === state.activeId); }
 function activeBatch() { return state.batches.find(b => b.id === state.activeBatchId); }
 function styleRef(name) { return STYLES.find(s => s.name === name); }
@@ -220,18 +229,22 @@ function exportOneRecipe(r) { downloadJSON({ recipes: [r] }, r.name.replace(/\s+
 function exportBeerXML(r) { downloadFile(BeerXML.generate(r), r.name.replace(/\s+/g, "_") + ".xml", "application/xml"); toast("Exported " + r.name + " as BeerXML"); }
 
 function importFile(file) {
-  const adapter = pickImportAdapter(file.name);
-  if (!adapter) { toast("Unsupported file type for import"); return; }
+  const isXml = /\.xml$/i.test(file.name);
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const recipes = adapter.parse(reader.result);
+      if (isXml) {
+        const recipes = BeerXML.parse(reader.result).map(migrateRecipe);
+        if (!recipes.length) { toast("No valid recipes found in file"); return; }
+        promptImportRecipes(recipes, "BeerXML");
+        return;
+      }
+      const parsed = Security.safeParseJSON(reader.result, 20000000);
+      const isFullBackup = parsed && Array.isArray(parsed.recipes) && (parsed.equipment || parsed.batches || parsed.inventory || parsed.tree || parsed.customIngredients);
+      if (isFullBackup) { promptImportBackup(parsed); return; }
+      const recipes = IMPORT_ADAPTERS.hopsJson.parse(reader.result).map(migrateRecipe);
       if (!recipes.length) { toast("No valid recipes found in file"); return; }
-      recipes.forEach(rec => { rec.id = uid(); migrateRecipe(rec); state.recipes.push(rec); addLeafToRoot(rec.id); });
-      state.activeId = state.recipes[state.recipes.length - 1].id;
-      state.activeSection = "recipes";
-      saveToStorage(); renderAll();
-      toast("Imported " + recipes.length + " recipe(s) via " + adapter.label);
+      promptImportRecipes(recipes, "JSON");
     } catch (e) {
       toast("Could not read that file: " + e.message);
       console.error(e);
@@ -240,6 +253,107 @@ function importFile(file) {
   reader.readAsText(file);
 }
 function addLeafToRoot(recipeId) { state.tree.children.push(Tree.createLeaf(recipeId)); }
+
+// ---- Import: always ask whether to add new copies or overwrite matching recipes ----
+function promptImportRecipes(recipes, sourceLabel) {
+  const matches = recipes.map(rec => {
+    const byId = state.recipes.find(x => x.id === rec.id);
+    const byName = state.recipes.find(x => x.name.toLowerCase() === rec.name.toLowerCase());
+    return { rec, existing: byId || byName || null };
+  });
+  const matchCount = matches.filter(m => m.existing).length;
+  showModal(
+    '<h3>Import ' + recipes.length + " Recipe" + (recipes.length > 1 ? "s" : "") + '</h3>' +
+    '<p style="font-size:13px;color:var(--ink-dim);">via ' + escapeHtml(sourceLabel) + '. ' +
+    (matchCount ? matchCount + " match" + (matchCount > 1 ? "" : "es") + " a recipe you already have; " : "") +
+    (recipes.length - matchCount) + " new.</p>" +
+    '<ul style="font-size:12px;color:var(--ink-faint);max-height:160px;overflow-y:auto;margin:10px 0;padding-left:18px;">' +
+    matches.map(m => "<li>" + escapeHtml(m.rec.name) + (m.existing ? ' <span style="color:var(--amber);">(matches your "' + escapeHtml(m.existing.name) + '")</span>' : "") + "</li>").join("") +
+    "</ul>" +
+    '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">' +
+    '<button class="btn btn-primary" id="importAppendBtn">Add All as New (never overwrites)</button>' +
+    (matchCount ? '<button class="btn" id="importOverwriteBtn">Overwrite Matches, Add Rest as New</button>' : "") +
+    '<button class="btn btn-ghost" id="importCancelBtn">Cancel</button>' +
+    "</div>",
+    overlay => {
+      overlay.querySelector("#importAppendBtn").addEventListener("click", () => {
+        matches.forEach(m => {
+          const copy = JSON.parse(JSON.stringify(m.rec));
+          copy.id = uid();
+          copy.name = uniqueSiblingName(state.tree, "recipe", copy.name);
+          state.recipes.push(copy); addLeafToRoot(copy.id);
+        });
+        finishImport(matches.length, 0);
+      });
+      const overwriteBtn = overlay.querySelector("#importOverwriteBtn");
+      if (overwriteBtn) overwriteBtn.addEventListener("click", () => {
+        let added = 0, overwritten = 0;
+        matches.forEach(m => {
+          if (m.existing) {
+            const idx = state.recipes.findIndex(x => x.id === m.existing.id);
+            const updated = JSON.parse(JSON.stringify(m.rec));
+            updated.id = m.existing.id; // keep the existing id so the tree entry & any batches still point at it
+            state.recipes[idx] = updated;
+            overwritten++;
+          } else {
+            const copy = JSON.parse(JSON.stringify(m.rec));
+            copy.id = uid();
+            copy.name = uniqueSiblingName(state.tree, "recipe", copy.name);
+            state.recipes.push(copy); addLeafToRoot(copy.id);
+            added++;
+          }
+        });
+        finishImport(added, overwritten);
+      });
+      overlay.querySelector("#importCancelBtn").addEventListener("click", closeModal);
+    }
+  );
+}
+function finishImport(added, overwritten) {
+  state.activeSection = "recipes";
+  if (state.recipes.length) state.activeId = state.recipes[state.recipes.length - 1].id;
+  saveToStorage(); closeModal(); renderAll();
+  const parts = [];
+  if (added) parts.push(added + " added");
+  if (overwritten) parts.push(overwritten + " overwritten");
+  toast(parts.length ? parts.join(", ") : "Import cancelled");
+}
+
+// ---- Full backup import: merge recipes only, or replace everything ----
+function promptImportBackup(parsed) {
+  const rCount = (parsed.recipes || []).length;
+  const bCount = (parsed.batches || []).length;
+  const eCount = (parsed.equipment || []).length;
+  showModal(
+    "<h3>Full Hops Backup Detected</h3>" +
+    '<p style="font-size:13px;color:var(--ink-dim);">' + rCount + " recipe(s), " + bCount + " batch(es), " + eCount + " equipment profile(s).</p>" +
+    '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">' +
+    '<button class="btn" id="mergeRecipesBtn">Merge Recipes Only (keep my current batches/inventory/equipment)</button>' +
+    '<button class="btn btn-danger" id="replaceAllBtn">Replace Everything on This Device</button>' +
+    '<button class="btn btn-ghost" id="backupCancelBtn">Cancel</button>' +
+    "</div>",
+    overlay => {
+      overlay.querySelector("#mergeRecipesBtn").addEventListener("click", () => {
+        closeModal();
+        const recipes = (parsed.recipes || []).map(migrateRecipe);
+        if (!recipes.length) { toast("No recipes found in backup"); return; }
+        promptImportRecipes(recipes, "backup file");
+      });
+      overlay.querySelector("#replaceAllBtn").addEventListener("click", () => {
+        if (!confirm("This replaces every recipe, batch, folder, inventory item, and equipment profile currently stored in this browser with the contents of the backup file. This can't be undone. Continue?")) return;
+        const restored = Security.sanitizeDeep(parsed);
+        (restored.recipes || []).forEach(migrateRecipe);
+        if (!restored.tree) { restored.tree = Tree.createRoot(); (restored.recipes || []).forEach(r => restored.tree.children.push(Tree.createLeaf(r.id))); }
+        Tree.pruneOrphans(restored.tree, new Set((restored.recipes || []).map(r => r.id)));
+        Object.keys(state).forEach(k => delete state[k]);
+        Object.assign(state, restored, { activeSection: "recipes", activeId: (restored.recipes && restored.recipes[0]) ? restored.recipes[0].id : null, activeTab: "design", activeBatchId: null });
+        saveToStorage(); closeModal(); renderAll();
+        toast("Backup restored");
+      });
+      overlay.querySelector("#backupCancelBtn").addEventListener("click", closeModal);
+    }
+  );
+}
 
 // ---- Scale recipe ----
 function scaleRecipe(r) {
@@ -285,33 +399,48 @@ function updatePricesFromInventory(r) {
 }
 
 // ---- Sharing ----
+function shareModalHtml(title, description, fullUrl) {
+  return '<h3>' + title + '</h3>' +
+    '<p style="color:var(--ink-faint);font-size:13px;">' + description + '</p>' +
+    '<input class="share-link-input" id="shareLinkInput" readonly value="' + escapeHtml(fullUrl) + '"/>' +
+    '<div style="display:flex;gap:8px;margin-top:12px;">' +
+    '<button class="btn btn-primary" id="copyLinkBtn" style="flex:1;">Copy Link</button>' +
+    '<button class="btn" id="shortenLinkBtn" style="flex:1;">Shorten via b0x.nz</button>' +
+    '</div>' +
+    '<div style="margin-top:14px;text-align:right;"><button class="btn btn-sm" id="closeModalBtn">Close</button></div>';
+}
+function wireShareModal(overlay, fullUrl) {
+  overlay.querySelector("#copyLinkBtn").addEventListener("click", () => {
+    navigator.clipboard.writeText(overlay.querySelector("#shareLinkInput").value).then(() => toast("Link copied"));
+  });
+  overlay.querySelector("#shortenLinkBtn").addEventListener("click", async e => {
+    e.target.textContent = "Shortening\u2026"; e.target.disabled = true;
+    const short = await LinkShortener.shorten(fullUrl);
+    if (short) { overlay.querySelector("#shareLinkInput").value = short; toast("Link shortened"); }
+    else toast("Shortening failed \u2014 using full link instead");
+    e.target.textContent = "Shorten via b0x.nz"; e.target.disabled = false;
+  });
+  overlay.querySelector("#closeModalBtn").addEventListener("click", closeModal);
+}
+
 async function shareRecipe(r) {
   try {
     const encoded = await Share.encodeRecipe(r);
     const fullUrl = Share.buildShareUrl(encoded);
-    showModal(
-      '<h3>Share "' + escapeHtml(r.name) + '"</h3>' +
-      '<p style="color:var(--ink-faint);font-size:13px;">This link contains the whole recipe. Anyone who opens it can view it and choose to add it to their own Hops.</p>' +
-      '<input class="share-link-input" id="shareLinkInput" readonly value="' + escapeHtml(fullUrl) + '"/>' +
-      '<div style="display:flex;gap:8px;margin-top:12px;">' +
-      '<button class="btn btn-primary" id="copyLinkBtn" style="flex:1;">Copy Link</button>' +
-      '<button class="btn" id="shortenLinkBtn" style="flex:1;">Shorten via b0x.nz</button>' +
-      '</div>' +
-      '<div style="margin-top:14px;text-align:right;"><button class="btn btn-sm" id="closeModalBtn">Close</button></div>',
-      overlay => {
-        overlay.querySelector("#copyLinkBtn").addEventListener("click", () => {
-          navigator.clipboard.writeText(overlay.querySelector("#shareLinkInput").value).then(() => toast("Link copied"));
-        });
-        overlay.querySelector("#shortenLinkBtn").addEventListener("click", async e => {
-          e.target.textContent = "Shortening\u2026"; e.target.disabled = true;
-          const short = await LinkShortener.shorten(fullUrl);
-          if (short) { overlay.querySelector("#shareLinkInput").value = short; toast("Link shortened"); }
-          else toast("Shortening failed \u2014 using full link instead");
-          e.target.textContent = "Shorten via b0x.nz"; e.target.disabled = false;
-        });
-        overlay.querySelector("#closeModalBtn").addEventListener("click", closeModal);
-      }
-    );
+    showModal(shareModalHtml('Share "' + escapeHtml(r.name) + '"', "This link contains the whole recipe. Anyone who opens it can view it and choose to add it to their own Hops.", fullUrl), overlay => wireShareModal(overlay, fullUrl));
+  } catch (e) {
+    toast("Could not create share link: " + e.message);
+  }
+}
+
+async function shareBatch(b) {
+  try {
+    const recipe = state.recipes.find(x => x.id === b.recipeId) || null;
+    const encoded = await Share.encodeBatch(b, recipe);
+    const fullUrl = Share.buildShareUrl(encoded);
+    showModal(shareModalHtml('Share Batch: "' + escapeHtml(b.recipeName) + '"',
+      "This link contains the batch (status, readings, notes) and its recipe, so it opens with full context on any device \u2014 handy for building the brew day on a computer, then capturing notes and timings on a phone. Send the link back the same way to report changes.",
+      fullUrl), overlay => wireShareModal(overlay, fullUrl));
   } catch (e) {
     toast("Could not create share link: " + e.message);
   }
@@ -321,43 +450,96 @@ async function checkIncomingShare() {
   const encoded = Share.readFromLocation();
   if (!encoded) return;
   try {
-    const incoming = migrateRecipe(await Share.decodeRecipe(encoded));
-    const existing = state.recipes.find(x => x.id === incoming.id);
-    const d = (() => { try { return computeDerived(incoming); } catch (e2) { return null; } })();
-    showModal(
-      '<h3>Shared Recipe</h3>' +
-      '<p><strong>' + escapeHtml(incoming.name) + '</strong>' + (incoming.brewer ? " by " + escapeHtml(incoming.brewer) : "") + '</p>' +
-      (d ? '<p style="color:var(--ink-faint);font-size:13px;">OG ' + d.og.toFixed(3) + ' \u00b7 ' + d.abv.toFixed(1) + '% ABV \u00b7 ' + Math.round(d.ibu) + ' IBU</p>' : "") +
-      (existing ? '<p style="color:var(--amber);font-size:13px;">You already have a recipe with this ID: "' + escapeHtml(existing.name) + '".</p>' : "") +
-      '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">' +
-      '<button class="btn btn-primary" id="addNewBtn" style="flex:1;">Add as New Recipe</button>' +
-      (existing ? '<button class="btn" id="updateExistingBtn" style="flex:1;">Update Existing</button>' : "") +
-      '<button class="btn btn-ghost" id="dismissShareBtn" style="flex:1;">Dismiss</button>' +
-      '</div>',
-      overlay => {
-        overlay.querySelector("#addNewBtn").addEventListener("click", () => {
-          const copy = JSON.parse(JSON.stringify(incoming));
-          copy.id = uid();
-          state.recipes.push(copy); addLeafToRoot(copy.id);
-          state.activeId = copy.id; state.activeSection = "recipes";
-          saveToStorage(); Share.clearFromLocation(); closeModal(); renderAll();
-          toast("Recipe added");
-        });
-        const updateBtn = overlay.querySelector("#updateExistingBtn");
-        if (updateBtn) updateBtn.addEventListener("click", () => {
-          const idx = state.recipes.findIndex(x => x.id === incoming.id);
-          state.recipes[idx] = incoming;
-          state.activeId = incoming.id; state.activeSection = "recipes";
-          saveToStorage(); Share.clearFromLocation(); closeModal(); renderAll();
-          toast("Recipe updated");
-        });
-        overlay.querySelector("#dismissShareBtn").addEventListener("click", () => { Share.clearFromLocation(); closeModal(); });
-      }
-    );
+    const { kind, data } = await Share.decode(encoded);
+    if (kind === "recipe") handleIncomingRecipeShare(migrateRecipe(data));
+    else if (kind === "batch") handleIncomingBatchShare(data);
   } catch (e) {
     toast("Shared link could not be read: " + e.message);
     Share.clearFromLocation();
   }
+}
+
+function handleIncomingRecipeShare(incoming) {
+  const existing = state.recipes.find(x => x.id === incoming.id);
+  const d = (() => { try { return computeDerived(incoming); } catch (e2) { return null; } })();
+  showModal(
+    '<h3>Shared Recipe</h3>' +
+    '<p><strong>' + escapeHtml(incoming.name) + '</strong>' + (incoming.brewer ? " by " + escapeHtml(incoming.brewer) : "") + '</p>' +
+    (d ? '<p style="color:var(--ink-faint);font-size:13px;">OG ' + d.og.toFixed(3) + ' \u00b7 ' + d.abv.toFixed(1) + '% ABV \u00b7 ' + Math.round(d.ibu) + ' IBU</p>' : "") +
+    (existing ? '<p style="color:var(--amber);font-size:13px;">You already have a recipe with this ID: "' + escapeHtml(existing.name) + '".</p>' : "") +
+    '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">' +
+    '<button class="btn btn-primary" id="addNewBtn" style="flex:1;">Add as New Recipe</button>' +
+    (existing ? '<button class="btn" id="updateExistingBtn" style="flex:1;">Update Existing</button>' : "") +
+    '<button class="btn btn-ghost" id="dismissShareBtn" style="flex:1;">Dismiss</button>' +
+    '</div>',
+    overlay => {
+      overlay.querySelector("#addNewBtn").addEventListener("click", () => {
+        const copy = JSON.parse(JSON.stringify(incoming));
+        copy.id = uid();
+        copy.name = uniqueSiblingName(state.tree, "recipe", copy.name);
+        state.recipes.push(copy); addLeafToRoot(copy.id);
+        state.activeId = copy.id; state.activeSection = "recipes";
+        saveToStorage(); Share.clearFromLocation(); closeModal(); renderAll();
+        toast("Recipe added");
+      });
+      const updateBtn = overlay.querySelector("#updateExistingBtn");
+      if (updateBtn) updateBtn.addEventListener("click", () => {
+        const idx = state.recipes.findIndex(x => x.id === incoming.id);
+        state.recipes[idx] = incoming;
+        state.activeId = incoming.id; state.activeSection = "recipes";
+        saveToStorage(); Share.clearFromLocation(); closeModal(); renderAll();
+        toast("Recipe updated");
+      });
+      overlay.querySelector("#dismissShareBtn").addEventListener("click", () => { Share.clearFromLocation(); closeModal(); });
+    }
+  );
+}
+
+function handleIncomingBatchShare(data) {
+  const incomingBatch = data.batch;
+  const incomingRecipe = data.recipe ? migrateRecipe(data.recipe) : null;
+  const existingBatch = state.batches.find(x => x.id === incomingBatch.id);
+  const haveRecipe = state.recipes.some(x => x.id === incomingBatch.recipeId);
+  showModal(
+    '<h3>Shared Batch</h3>' +
+    '<p><strong>' + escapeHtml(incomingBatch.recipeName) + '</strong> \u2014 ' + escapeHtml(incomingBatch.status) + ' \u00b7 ' + nzDate(incomingBatch.brewDate) + '</p>' +
+    (incomingBatch.notes ? '<p style="color:var(--ink-faint);font-size:13px;">"' + escapeHtml(incomingBatch.notes.slice(0, 140)) + (incomingBatch.notes.length > 140 ? "\u2026" : "") + '"</p>' : "") +
+    (!haveRecipe && incomingRecipe ? '<p style="color:var(--ink-faint);font-size:12px;">Its recipe ("' + escapeHtml(incomingRecipe.name) + '") will be added too, since you don\u2019t have it yet.</p>' : "") +
+    (existingBatch ? '<p style="color:var(--amber);font-size:13px;">You already have a batch with this ID.</p>' : "") +
+    '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">' +
+    '<button class="btn btn-primary" id="addNewBatchBtn" style="flex:1;">Add as New Batch</button>' +
+    (existingBatch ? '<button class="btn" id="updateExistingBatchBtn" style="flex:1;">Update Existing Batch</button>' : "") +
+    '<button class="btn btn-ghost" id="dismissShareBtn" style="flex:1;">Dismiss</button>' +
+    '</div>',
+    overlay => {
+      function ensureRecipePresent() {
+        if (!haveRecipe && incomingRecipe) {
+          const copy = JSON.parse(JSON.stringify(incomingRecipe));
+          copy.name = uniqueSiblingName(state.tree, "recipe", copy.name);
+          state.recipes.push(copy); addLeafToRoot(copy.id);
+        }
+      }
+      overlay.querySelector("#addNewBatchBtn").addEventListener("click", () => {
+        ensureRecipePresent();
+        const copy = JSON.parse(JSON.stringify(incomingBatch));
+        copy.id = uid();
+        state.batches.push(copy);
+        state.activeBatchId = copy.id; state.activeSection = "batches";
+        saveToStorage(); Share.clearFromLocation(); closeModal(); renderAll();
+        toast("Batch added");
+      });
+      const updateBtn = overlay.querySelector("#updateExistingBatchBtn");
+      if (updateBtn) updateBtn.addEventListener("click", () => {
+        ensureRecipePresent();
+        const idx = state.batches.findIndex(x => x.id === incomingBatch.id);
+        state.batches[idx] = incomingBatch;
+        state.activeBatchId = incomingBatch.id; state.activeSection = "batches";
+        saveToStorage(); Share.clearFromLocation(); closeModal(); renderAll();
+        toast("Batch updated");
+      });
+      overlay.querySelector("#dismissShareBtn").addEventListener("click", () => { Share.clearFromLocation(); closeModal(); });
+    }
+  );
 }
 
 // ================= RENDERING: TOP LEVEL =================
@@ -400,9 +582,10 @@ function renderTreeNode(node, container, depth) {
   node.children.forEach(child => {
     const row = document.createElement("div");
     row.className = "tree-row";
-    row.style.paddingLeft = (depth * 16) + "px";
+    row.style.paddingLeft = (10 + depth * 22) + "px";
     row.dataset.nodeId = child.id;
     row.dataset.nodeType = child.type;
+    row.dataset.depth = depth;
     row.draggable = true;
 
     if (child.type === "folder") {
@@ -453,9 +636,24 @@ function renderTreeNode(node, container, depth) {
 function openTreeContextMenu(e, node, parent) {
   const items = [];
   if (node.type === "folder") {
-    items.push({ label: "New Recipe Here", action: () => { const r = newRecipe(); state.recipes.push(r); node.children.push(Tree.createLeaf(r.id)); state.activeId = r.id; state.activeTab = "design"; saveToStorage(); renderAll(); } });
-    items.push({ label: "New Folder Here", action: () => { node.children.push(Tree.createFolder("New Folder")); saveToStorage(); renderSidebar(); } });
-    items.push({ label: "Rename Folder", action: () => { const name = window.prompt("Folder name:", node.name); if (name) { Tree.renameNode(state.tree, node.id, name); saveToStorage(); renderSidebar(); } } });
+    items.push({ label: "New Recipe Here", action: () => {
+      const r = newRecipe();
+      r.name = uniqueSiblingName(node, "recipe", r.name);
+      state.recipes.push(r); node.children.push(Tree.createLeaf(r.id));
+      state.activeId = r.id; state.activeTab = "design"; saveToStorage(); renderAll();
+    }});
+    items.push({ label: "New Folder Here", action: () => {
+      node.children.push(Tree.createFolder(uniqueSiblingName(node, "folder", "New Folder")));
+      saveToStorage(); renderSidebar();
+    }});
+    items.push({ label: "Rename Folder", action: () => {
+      const name = window.prompt("Folder name:", node.name);
+      if (name) {
+        const parentNode = Tree.findParent(state.tree, node.id) || state.tree;
+        Tree.renameNode(state.tree, node.id, uniqueSiblingName(parentNode, "folder", name, node.id));
+        saveToStorage(); renderSidebar();
+      }
+    }});
     items.push({ label: "Edit Notes", action: () => { const notes = window.prompt("Folder notes:", node.notes || ""); if (notes !== null) { node.notes = notes; saveToStorage(); } } });
     if (node.id !== "root") {
       items.push({ divider: true });
@@ -475,14 +673,23 @@ function openTreeContextMenu(e, node, parent) {
     if (r) {
       items.push({ label: "Open", action: () => { state.activeId = r.id; state.activeSection = "recipes"; saveToStorage(); renderAll(); } });
       items.push({ label: "Clone", action: () => {
-        const copy = JSON.parse(JSON.stringify(r)); copy.id = uid(); copy.name = r.name + " (copy)";
-        state.recipes.push(copy);
+        const copy = JSON.parse(JSON.stringify(r)); copy.id = uid();
         const leaf = Tree.findLeafByRecipeId(state.tree, r.id);
         const parentNode = (leaf && Tree.findParent(state.tree, leaf.id)) || state.tree;
+        copy.name = uniqueSiblingName(parentNode, "recipe", r.name + " (copy)");
+        state.recipes.push(copy);
         parentNode.children.push(Tree.createLeaf(copy.id));
         state.activeId = copy.id; saveToStorage(); renderAll(); toast("Recipe cloned");
       }});
-      items.push({ label: "Rename", action: () => { const name = window.prompt("Recipe name:", r.name); if (name) { r.name = name; saveToStorage(); renderAll(); } } });
+      items.push({ label: "Rename", action: () => {
+        const name = window.prompt("Recipe name:", r.name);
+        if (name) {
+          const leaf = Tree.findLeafByRecipeId(state.tree, r.id);
+          const parentNode = (leaf && Tree.findParent(state.tree, leaf.id)) || state.tree;
+          r.name = uniqueSiblingName(parentNode, "recipe", name, leaf ? leaf.id : undefined);
+          saveToStorage(); renderAll();
+        }
+      }});
       items.push({ label: "Share Link", action: () => shareRecipe(r) });
       items.push({ divider: true });
       items.push({ label: "Delete", danger: true, action: () => {
@@ -532,15 +739,24 @@ function renderRecipesMain(main) {
     '<div class="tabs">' + tabBtn("design", "Design") + tabBtn("water", "Water") + tabBtn("mash", "Mash & Ferment") + tabBtn("history", "Brew History") + tabBtn("notes", "Notes") + '</div>' +
     '<div id="tabPanel"></div>';
   document.getElementById("recipeName").addEventListener("input", e => { r.name = e.target.value; saveToStorage(); renderSidebar(); });
+  document.getElementById("recipeName").addEventListener("blur", e => {
+    if (!e.target.value.trim()) { e.target.value = r.name = "Untitled Recipe"; }
+    const leaf = Tree.findLeafByRecipeId(state.tree, r.id);
+    const parentNode = (leaf && Tree.findParent(state.tree, leaf.id)) || state.tree;
+    const deduped = uniqueSiblingName(parentNode, "recipe", r.name, leaf ? leaf.id : undefined);
+    if (deduped !== r.name) { r.name = deduped; e.target.value = deduped; toast('Renamed to "' + deduped + '" to avoid a duplicate name'); }
+    saveToStorage(); renderSidebar();
+  });
   document.getElementById("shareBtn").addEventListener("click", () => shareRecipe(r));
   document.getElementById("scaleBtn").addEventListener("click", () => scaleRecipe(r));
   document.getElementById("updatePricesBtn").addEventListener("click", () => updatePricesFromInventory(r));
   document.getElementById("undoLastBtn").addEventListener("click", () => undoLast());
   document.getElementById("dupBtn").addEventListener("click", () => {
-    const copy = JSON.parse(JSON.stringify(r)); copy.id = uid(); copy.name = r.name + " (copy)";
-    state.recipes.push(copy);
+    const copy = JSON.parse(JSON.stringify(r)); copy.id = uid();
     const leaf = Tree.findLeafByRecipeId(state.tree, r.id);
     const parentNode = (leaf && Tree.findParent(state.tree, leaf.id)) || state.tree;
+    copy.name = uniqueSiblingName(parentNode, "recipe", r.name + " (copy)");
+    state.recipes.push(copy);
     parentNode.children.push(Tree.createLeaf(copy.id));
     state.activeId = copy.id; saveToStorage(); renderAll();
   });
@@ -1002,6 +1218,7 @@ function refreshComputed(r) {
 
 function handleNewRecipe() {
   const r = newRecipe();
+  r.name = uniqueSiblingName(state.tree, "recipe", r.name);
   state.recipes.push(r); addLeafToRoot(r.id);
   state.activeId = r.id; state.activeTab = "design";
   saveToStorage(); renderAll(); toast("New recipe created");
@@ -1022,7 +1239,7 @@ function renderBatchesMain(main) {
   const statusBtns = statuses.map(s => '<button class="btn ' + (b.status === s ? "btn-primary" : "") + '" data-status="' + s + '" style="flex:1; min-width:100px;">' + s + '</button>').join("");
   const recipeOptions = state.recipes.map(rc => '<option value="' + rc.id + '" ' + (rc.id === b.recipeId ? "selected" : "") + '>' + escapeHtml(rc.name) + '</option>').join("");
   main.innerHTML =
-    '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">' + escapeHtml(b.recipeName) + '</h1><div class="header-actions"><button class="btn btn-sm btn-danger" id="deleteBatchBtn">Delete Batch</button></div></div>' +
+    '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">' + escapeHtml(b.recipeName) + '</h1><div class="header-actions"><button class="btn btn-sm" id="shareBatchBtn">Share</button><button class="btn btn-sm btn-danger" id="deleteBatchBtn">Delete Batch</button></div></div>' +
     '<div class="card"><h3>Status</h3><div style="display:flex; gap:8px; flex-wrap:wrap;">' + statusBtns + '</div></div>' +
     '<div class="card"><h3>Brew Day</h3><div class="field-grid">' +
     '<div class="field"><label>Recipe</label><select id="batchRecipeSelect">' + recipeOptions + '</select></div>' +
@@ -1044,6 +1261,7 @@ function renderBatchesMain(main) {
     '<div class="card"><h3>Batch Notes</h3><textarea class="notes-area" id="batchNotes" placeholder="Brew day observations, gravity readings, off-flavours, timing...">' + escapeHtml(b.notes) + '</textarea></div>';
 
   main.querySelectorAll("[data-status]").forEach(btn => btn.addEventListener("click", () => { b.status = btn.dataset.status; saveToStorage(); renderAll(); }));
+  document.getElementById("shareBatchBtn").addEventListener("click", () => shareBatch(b));
   document.getElementById("deleteBatchBtn").addEventListener("click", () => {
     if (!confirm("Delete this batch record?")) return;
     state.batches = state.batches.filter(x => x.id !== b.id);
@@ -1093,7 +1311,13 @@ function renderInventoryMain(main) {
       ).join("") : '<tr class="empty-row"><td colspan="5">Nothing tracked yet</td></tr>';
       return '<div class="card"><h3>' + label + ' <button class="btn btn-sm" data-add-kind="' + kind + '">+ Add Item</button></h3>' +
         '<table class="ing-table"><thead><tr><th style="width:36%">Name</th><th>Stock</th><th>Unit</th><th>Cost / unit ($)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
-    }).join("");
+    }).join("") +
+    '<h2 class="display" style="font-size:20px; margin:28px 0 6px;">Ingredient Library</h2>' +
+    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">Custom ingredients you\u2019ve saved (via "Save Item" on a recipe, or added here) \u2014 these show up in the Fermentables/Hops/Yeast dropdowns on every recipe.</p>' +
+    customLibraryCardHtml("fermentables", "Custom Fermentables", customFermentableRowHtml) +
+    customLibraryCardHtml("hops", "Custom Hops", customHopRowHtml) +
+    customLibraryCardHtml("yeast", "Custom Yeast", customYeastRowHtml);
+
   main.querySelectorAll("[data-add-kind]").forEach(btn => btn.addEventListener("click", () => { state.inventory[btn.dataset.addKind].push(newInventoryItem(btn.dataset.addKind)); saveToStorage(); renderMain(); }));
   main.querySelectorAll("[data-ifield]").forEach(el => el.addEventListener("input", () => {
     const row = el.closest("[data-kind]"); const kind = row.dataset.kind, idx = Number(row.dataset.idx);
@@ -1101,6 +1325,62 @@ function renderInventoryMain(main) {
     state.inventory[kind][idx][el.dataset.ifield] = val; saveToStorage();
   }));
   main.querySelectorAll("[data-del-inv]").forEach(btn => btn.addEventListener("click", () => { const row = btn.closest("[data-kind]"); state.inventory[btn.dataset.delInv].splice(Number(row.dataset.idx), 1); saveToStorage(); renderMain(); }));
+
+  main.querySelectorAll("[data-add-custom]").forEach(btn => btn.addEventListener("click", () => {
+    const kind = btn.dataset.addCustom;
+    const blank = kind === "fermentables" ? { name: "New Fermentable", type: "Grain", ppg: 37, srm: 4, mashable: true }
+      : kind === "hops" ? { name: "New Hop", alpha: 8 }
+      : { name: "New Yeast", type: "Ale", attenuation: 0.75 };
+    state.customIngredients[kind].push(blank);
+    saveToStorage(); renderMain();
+  }));
+  main.querySelectorAll("[data-clfield]").forEach(el => el.addEventListener("input", () => {
+    const row = el.closest("[data-ckind]"); const kind = row.dataset.ckind, idx = Number(row.dataset.idx);
+    const val = el.type === "number" ? Number(el.value) : el.value;
+    const item = state.customIngredients[kind][idx];
+    if (el.dataset.clfield === "attenuationPct") item.attenuation = val / 100;
+    else item[el.dataset.clfield] = val;
+    if (kind === "fermentables" && el.dataset.clfield === "type") item.mashable = ["Grain", "Adjunct"].includes(val);
+    saveToStorage();
+  }));
+  main.querySelectorAll("[data-del-custom]").forEach(btn => btn.addEventListener("click", () => {
+    const row = btn.closest("[data-ckind]");
+    state.customIngredients[row.dataset.ckind].splice(Number(row.dataset.idx), 1);
+    saveToStorage(); renderMain();
+  }));
+}
+
+function customLibraryCardHtml(kind, label, rowFn) {
+  const items = state.customIngredients[kind];
+  const rows = items.length ? items.map((item, i) => rowFn(item, i)).join("") : null;
+  const headers = kind === "fermentables" ? "<th style='width:28%'>Name</th><th>Type</th><th>PPG</th><th>Colour (SRM)</th><th></th>"
+    : kind === "hops" ? "<th style='width:40%'>Name</th><th>Alpha %</th><th></th>"
+    : "<th style='width:34%'>Name</th><th>Type</th><th>Attenuation %</th><th></th>";
+  return '<div class="card"><h3>' + label + ' <button class="btn btn-sm" data-add-custom="' + kind + '">+ Add Custom ' + (kind === "fermentables" ? "Fermentable" : kind === "hops" ? "Hop" : "Yeast") + '</button></h3>' +
+    '<table class="ing-table"><thead><tr>' + headers + '</tr></thead><tbody>' +
+    (rows || '<tr class="empty-row"><td colspan="5">None saved yet</td></tr>') +
+    '</tbody></table></div>';
+}
+function customFermentableRowHtml(item, i) {
+  return '<tr data-ckind="fermentables" data-idx="' + i + '">' +
+    '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
+    '<td><select data-clfield="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
+    '<td><input type="number" step="0.5" data-clfield="ppg" value="' + item.ppg + '"/></td>' +
+    '<td><input type="number" step="0.5" data-clfield="srm" value="' + item.srm + '"/></td>' +
+    '<td><button class="del-btn" data-del-custom>\u2715</button></td></tr>';
+}
+function customHopRowHtml(item, i) {
+  return '<tr data-ckind="hops" data-idx="' + i + '">' +
+    '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
+    '<td><input type="number" step="0.1" data-clfield="alpha" value="' + item.alpha + '"/></td>' +
+    '<td><button class="del-btn" data-del-custom>\u2715</button></td></tr>';
+}
+function customYeastRowHtml(item, i) {
+  return '<tr data-ckind="yeast" data-idx="' + i + '">' +
+    '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
+    '<td><select data-clfield="type">' + ["Ale", "Lager", "Ale Dry"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
+    '<td><input type="number" step="1" data-clfield="attenuationPct" value="' + (item.attenuation * 100).toFixed(0) + '"/></td>' +
+    '<td><button class="del-btn" data-del-custom>\u2715</button></td></tr>';
 }
 
 // ================= EQUIPMENT =================
@@ -1195,10 +1475,11 @@ function init() {
   saveToStorage();
   renderAll();
   updateUnitToggleLabel();
+  renderFileWorkspaceControls();
   checkIncomingShare();
 
   document.getElementById("newRecipeBtn").addEventListener("click", () => { if (state.activeSection === "recipes") handleNewRecipe(); else if (state.activeSection === "batches") handleNewBatch(); });
-  document.getElementById("newFolderBtn").addEventListener("click", () => { state.tree.children.push(Tree.createFolder("New Folder")); saveToStorage(); renderSidebar(); });
+  document.getElementById("newFolderBtn").addEventListener("click", () => { state.tree.children.push(Tree.createFolder(uniqueSiblingName(state.tree, "folder", "New Folder"))); saveToStorage(); renderSidebar(); });
   document.getElementById("exportAllBtn").addEventListener("click", exportAll);
   document.getElementById("importInput").addEventListener("change", e => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ""; });
   document.getElementById("unitToggleBtn").addEventListener("click", () => { state.unitSystem = state.unitSystem === "metric" ? "us" : "metric"; saveToStorage(); updateUnitToggleLabel(); renderAll(); });
@@ -1214,5 +1495,67 @@ function init() {
   });
 }
 function updateUnitToggleLabel() { document.getElementById("unitToggleBtn").textContent = state.unitSystem === "metric" ? "Units: Metric" : "Units: Imperial"; }
+
+// ---- Working file (File System Access API) ----
+function renderFileWorkspaceControls() {
+  const el = document.getElementById("fileWorkspaceControls");
+  if (!el) return;
+  if (!FileWorkspace.supported) {
+    el.innerHTML = '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 8px;">Local file linking needs Chrome or Edge \u2014 use Export/Import below on this browser instead.</p>';
+    return;
+  }
+  el.innerHTML =
+    '<div style="display:flex; gap:8px; margin-bottom:6px;">' +
+    '<button class="btn btn-sm" id="openFileBtn" style="flex:1;">Open File\u2026</button>' +
+    '<button class="btn btn-sm btn-primary" id="saveFileBtn" style="flex:1;">' + (FileWorkspace.linkedName ? "Save" : "Save As\u2026") + '</button>' +
+    '</div>' +
+    '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 10px;">' +
+    (FileWorkspace.linkedName
+      ? 'Linked to <strong style="color:var(--ink-dim);">' + escapeHtml(FileWorkspace.linkedName) + '</strong> \u2014 Save writes straight back to it. <a href="#" id="unlinkFileBtn" style="color:var(--amber);">Unlink</a>'
+      : "No file linked yet \u2014 Save will ask where to create one, then remembers it for next time.") +
+    '</p>';
+  document.getElementById("openFileBtn").addEventListener("click", handleOpenWorkingFile);
+  document.getElementById("saveFileBtn").addEventListener("click", handleSaveWorkingFile);
+  const unlinkBtn = document.getElementById("unlinkFileBtn");
+  if (unlinkBtn) unlinkBtn.addEventListener("click", e => { e.preventDefault(); FileWorkspace.unlink(); renderFileWorkspaceControls(); toast("Unlinked \u2014 Save will ask for a new location"); });
+}
+
+async function handleOpenWorkingFile() {
+  try {
+    const data = await FileWorkspace.openFile();
+    if (!data || !Array.isArray(data.recipes)) { toast("That file doesn't look like a Hops backup"); FileWorkspace.unlink(); return; }
+    if (state.recipes.length && !confirm('Open "' + FileWorkspace.linkedName + '"? This replaces everything currently shown in Hops (including this browser\'s own autosave) with the file\'s contents.')) {
+      FileWorkspace.unlink();
+      return;
+    }
+    const restored = Security.sanitizeDeep(data);
+    (restored.recipes || []).forEach(migrateRecipe);
+    if (!restored.tree) { restored.tree = Tree.createRoot(); (restored.recipes || []).forEach(r => restored.tree.children.push(Tree.createLeaf(r.id))); }
+    Tree.pruneOrphans(restored.tree, new Set((restored.recipes || []).map(r => r.id)));
+    Object.keys(state).forEach(k => delete state[k]);
+    Object.assign(state, restored, { activeSection: "recipes", activeId: (restored.recipes && restored.recipes[0]) ? restored.recipes[0].id : null, activeTab: "design", activeBatchId: null });
+    if (!state.equipment) state.equipment = [];
+    if (!state.batches) state.batches = [];
+    if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
+    if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
+    if (!state.unitSystem) state.unitSystem = "metric";
+    saveToStorage(); renderAll(); renderFileWorkspaceControls(); updateUnitToggleLabel();
+    toast("Opened " + FileWorkspace.linkedName);
+  } catch (e) {
+    if (e.name === "AbortError") return; // user cancelled the picker
+    toast("Could not open file: " + e.message);
+  }
+}
+
+async function handleSaveWorkingFile() {
+  try {
+    const name = FileWorkspace.fileHandle ? await FileWorkspace.saveToLinkedFile(state) : await FileWorkspace.saveAsNewFile(state);
+    renderFileWorkspaceControls();
+    toast("Saved to " + name);
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    toast("Could not save file: " + e.message);
+  }
+}
 
 document.addEventListener("DOMContentLoaded", init);

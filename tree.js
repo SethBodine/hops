@@ -85,6 +85,25 @@ const Tree = {
     if (node) node.name = newName;
   },
 
+  // Generate a name that doesn't collide (case-insensitively) with any same-type sibling
+  // under `parentNode`. "Recipe" -> "Recipe (2)" -> "Recipe (3)" etc.
+  // `nameOf(child)` returns a sibling's display name (tree.js doesn't know about recipe
+  // data, so the caller supplies how to resolve a recipe leaf's name).
+  // `excludeId` lets a rename check against its own siblings without colliding with itself.
+  uniqueSiblingName(parentNode, type, desiredName, nameOf, excludeId) {
+    const taken = new Set(
+      parentNode.children
+        .filter(c => c.type === type && c.id !== excludeId)
+        .map(nameOf)
+        .filter(n => n != null)
+        .map(n => n.toLowerCase())
+    );
+    if (!taken.has(desiredName.toLowerCase())) return desiredName;
+    let i = 2;
+    while (taken.has((desiredName + " (" + i + ")").toLowerCase())) i++;
+    return desiredName + " (" + i + ")";
+  },
+
   countRecipes(node) {
     if (node.type === "recipe") return 1;
     return node.children.reduce((sum, c) => sum + this.countRecipes(c), 0);

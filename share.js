@@ -34,11 +34,12 @@ const Share = {
     return new TextDecoder().decode(buf);
   },
 
-  // Encode a single recipe (plus a small envelope) into a URL-safe string.
-  async encodeRecipe(recipe) {
-    const envelope = { v: 1, kind: "recipe", data: recipe, ts: Date.now() };
+  // Encode a recipe or a batch (plus its recipe, so the recipient has full context)
+  // into a URL-safe string. kind: "recipe" | "batch".
+  async encode(kind, data) {
+    const envelope = { v: 1, kind, data, ts: Date.now() };
     const json = JSON.stringify(envelope);
-    if (json.length > MAX_SHARE_PAYLOAD_BYTES) throw new Error("Recipe is too large to share as a link");
+    if (json.length > MAX_SHARE_PAYLOAD_BYTES) throw new Error("Too large to share as a link");
     let payload, prefix;
     if (this.supportsCompression()) {
       payload = this.base64urlEncode(await this.gzip(json));
@@ -49,8 +50,11 @@ const Share = {
     }
     return prefix + payload;
   },
+  async encodeRecipe(recipe) { return this.encode("recipe", recipe); },
+  async encodeBatch(batch, recipe) { return this.encode("batch", { batch, recipe }); },
 
-  async decodeRecipe(encoded) {
+  // Decode any share payload, returning { kind, data }. Validates shape per kind.
+  async decode(encoded) {
     if (typeof encoded !== "string" || encoded.length > MAX_SHARE_PAYLOAD_BYTES * 2) {
       throw new Error("Share link is invalid or too large");
     }
@@ -63,10 +67,21 @@ const Share = {
       throw new Error("Unrecognised share link format");
     }
     const envelope = Security.safeParseJSON(json, MAX_SHARE_PAYLOAD_BYTES);
-    if (!envelope || envelope.kind !== "recipe" || !Security.looksLikeRecipe(envelope.data)) {
-      throw new Error("Link does not contain a valid recipe");
+    if (!envelope || !envelope.kind) throw new Error("Link does not contain valid Hops data");
+    if (envelope.kind === "recipe") {
+      if (!Security.looksLikeRecipe(envelope.data)) throw new Error("Link does not contain a valid recipe");
+    } else if (envelope.kind === "batch") {
+      if (!envelope.data || typeof envelope.data !== "object" || !envelope.data.batch) throw new Error("Link does not contain a valid batch");
+      if (envelope.data.recipe && !Security.looksLikeRecipe(envelope.data.recipe)) throw new Error("Link's recipe data is invalid");
+    } else {
+      throw new Error("Unknown share type: " + envelope.kind);
     }
-    return envelope.data;
+    return { kind: envelope.kind, data: envelope.data };
+  },
+  async decodeRecipe(encoded) {
+    const { kind, data } = await this.decode(encoded);
+    if (kind !== "recipe") throw new Error("This link is a " + kind + ", not a recipe");
+    return data;
   },
 
   buildShareUrl(encoded) {
