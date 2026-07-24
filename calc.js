@@ -168,4 +168,28 @@ const Calc = {
     if (!total) return fermentables.map(() => 0);
     return fermentables.map(f => ((Number(f.amountLb) || 0) / total) * 100);
   },
+
+  // ---- Sanity checks: flag values that are physically implausible or likely a typo,
+  // without being prescriptive about what "correct" looks like. Each returns a short,
+  // friendly message rather than a technical one.
+  sanityWarnings(d, r) {
+    const warnings = [];
+    if (d.fg >= d.og) warnings.push("Final gravity isn't lower than original gravity \u2014 that's not physically possible during fermentation. Check your yeast attenuation and OG/FG inputs.");
+    if (d.og > 1.14) warnings.push("Original gravity is unusually high (" + d.og.toFixed(3) + "). Double-check your fermentable amounts and batch size.");
+    if (d.og < 1.020 && d.og > 1.000) warnings.push("Original gravity is unusually low (" + d.og.toFixed(3) + ") for a beer with fermentables in it \u2014 check your batch size and mash efficiency.");
+    if (d.abv < 0) warnings.push("Estimated ABV came out negative \u2014 check OG/FG and attenuation.");
+    if (d.abv > 20) warnings.push("Estimated ABV is unusually high (" + d.abv.toFixed(1) + "%). Worth double-checking OG/FG.");
+    if (d.ibu > 150) warnings.push("Estimated bitterness (" + Math.round(d.ibu) + " IBU) is far beyond typical beer styles \u2014 check hop amounts, boil times, and batch size.");
+    if (d.srm > 80) warnings.push("Estimated colour (" + d.srm.toFixed(0) + " SRM) is beyond typical beer styles \u2014 check fermentable amounts and colour values.");
+    if (Number(r.efficiencyPct) <= 0 || Number(r.efficiencyPct) > 100) warnings.push("Mash efficiency of " + r.efficiencyPct + "% is outside the possible 0\u2013100% range.");
+    if (Number(r.yeast.attenuation) <= 0 || Number(r.yeast.attenuation) > 1) warnings.push("Yeast attenuation of " + (Number(r.yeast.attenuation) * 100).toFixed(0) + "% is outside the possible 0\u2013100% range.");
+    if (Number(r.batchVolGal) <= 0) warnings.push("Batch size is zero or negative.");
+    if (d.preBoilVolGal < Number(r.batchVolGal)) warnings.push("Pre-boil volume is smaller than the batch size \u2014 boiling should reduce volume, not the other way around. Check your pre-boil volume or equipment boil-off settings.");
+    if (r.mashWaterVolGal <= 0 && r.fermentables.some(f => f.mashable)) warnings.push("Mash water volume is zero, but this recipe has mashable grains \u2014 check your water volumes.");
+    ["Ca", "Mg", "Na", "SO4", "Cl", "HCO3"].forEach(ion => {
+      if (d.finalWater[ion] < 0) warnings.push(ion + " in the mash water came out negative \u2014 check your base water profile and salt additions.");
+      if (d.finalWater[ion] > 500) warnings.push(ion + " in the mash water is unusually high (" + Math.round(d.finalWater[ion]) + " ppm) \u2014 check your salt addition amounts.");
+    });
+    return warnings;
+  },
 };

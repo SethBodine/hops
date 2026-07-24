@@ -736,6 +736,7 @@ function renderRecipesMain(main) {
     '<button class="btn btn-sm btn-danger" id="deleteBtn">Delete</button>' +
     '</div></div>' +
     renderGaugeStrip(d, style) +
+    renderSanityBanner(d, r) +
     '<div class="tabs">' + tabBtn("design", "Design") + tabBtn("water", "Water") + tabBtn("mash", "Mash & Ferment") + tabBtn("history", "Brew History") + tabBtn("notes", "Notes") + '</div>' +
     '<div id="tabPanel"></div>';
   document.getElementById("recipeName").addEventListener("input", e => { r.name = e.target.value; saveToStorage(); renderSidebar(); });
@@ -796,6 +797,16 @@ function colorGaugeHtml(srm, range) {
   const inRange = range ? Calc.inRange(srm, range) : null;
   return '<div class="gauge ' + (inRange === false ? "out" : "") + '"><div class="label">Colour</div><div class="value" style="align-items:center;"><div class="color-swatch" style="background:' + Calc.srmToRgb(srm) + '"></div><span style="margin-left:8px;">' + srm.toFixed(1) + '<span class="unit">SRM</span></span></div>' +
     (range ? '<div class="range-label" style="margin-top:10px;">' + range[0] + '\u2013' + range[1] + ' style range</div>' : "") + '</div>';
+}
+
+function renderSanityBanner(d, r) {
+  const warnings = Calc.sanityWarnings(d, r);
+  if (!warnings.length) return "";
+  return '<div class="sanity-banner" title="' + escapeHtml(warnings.join(" \u2014 ")) + '">' +
+    '<span class="sanity-icon">\u26a0\ufe0f</span>' +
+    '<div><div class="sanity-headline">Hey, this doesn\u2019t look right \u2014 you may want to check your values</div>' +
+    '<ul class="sanity-list">' + warnings.map(w => "<li>" + escapeHtml(w) + "</li>").join("") + '</ul></div>' +
+    '</div>';
 }
 
 function renderTabPanel(r, d, style) {
@@ -980,7 +991,7 @@ function mashTabHtml(r, d) {
     '<div style="margin-top:16px;">' + steps + '<button class="btn btn-sm add-row-btn" data-action="addMashStep">+ Add Mash Step</button></div></div>' +
     '<div class="card"><h3>Strike Water</h3><div class="field-grid">' +
     '<div class="field"><label>Grain Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" data-field="grainTempF" data-unitkind="temp-f" value="' + uVal(r.grainTempF, "temp-f") + '"/></div>' +
-    '<div class="field" style="display:flex; align-items:flex-end; gap:6px; padding-bottom:6px;"><label style="display:flex; align-items:center; gap:6px; margin:0; text-transform:none; font-size:13px; color:var(--ink);"><input type="checkbox" id="adjustTempForEquip" ' + (r.adjustTempForEquip ? "checked" : "") + ' ' + (equip ? "" : "disabled") + ' style="width:auto;"/> Adjust Temp for Equipment</label></div>' +
+    '<div class="field" style="display:flex; align-items:flex-end; gap:6px; padding-bottom:6px;"><label style="display:flex; align-items:center; gap:6px; margin:0; text-transform:none; font-size:13px; color:var(--ink);"><input type="checkbox" id="adjustTempForEquip" ' + (r.adjustTempForEquip ? "checked" : "") + ' ' + (equip ? "" : "disabled") + '/> Adjust Temp for Equipment</label></div>' +
     '</div>' +
     (equip ? "" : '<p style="color:var(--ink-faint);font-size:12px;margin:6px 0 0;">Link an Equipment Profile on the Design tab to enable the equipment thermal-mass adjustment.</p>') +
     '<div class="stat-row" style="margin-top:8px;"><span class="stat-label">Water : Grain Ratio</span><span class="stat-value stat-ratio">' + d.ratioQtPerLb.toFixed(2) + ' qt/lb</span></div>' +
@@ -1186,6 +1197,15 @@ function refreshComputed(r) {
   const style = styleRef(r.styleName);
   const stripHolder = document.querySelector(".gauge-strip");
   if (stripHolder) stripHolder.outerHTML = renderGaugeStrip(d, style);
+  const bannerHolder = document.querySelector(".sanity-banner");
+  const freshBanner = renderSanityBanner(d, r);
+  if (bannerHolder) {
+    if (freshBanner) bannerHolder.outerHTML = freshBanner;
+    else bannerHolder.remove();
+  } else if (freshBanner) {
+    const strip = document.querySelector(".gauge-strip");
+    if (strip) strip.insertAdjacentHTML("afterend", freshBanner);
+  }
 
   if (state.activeTab === "design") {
     const headers = Array.from(document.querySelectorAll(".card h3")).filter(h => h.textContent.indexOf("Style Guide") === 0);
