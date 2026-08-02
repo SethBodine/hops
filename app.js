@@ -11,6 +11,7 @@ let state = {
   customIngredients: { fermentables: [], hops: [], yeast: [] },
   unitSystem: "metric", // NZ default. "us" is the alternative.
   region: "New Zealand", // which country's hops/malts/yeast show first in the ingredient pickers
+  inventoryRegionFilter: ["New Zealand", "Australia"], // regions shown on the Inventory tab; [] = All Regions
   activeSection: "recipes", // recipes | batches | inventory | equipment | tools
   activeId: null,
   activeTab: "design",
@@ -20,20 +21,7 @@ let state = {
 function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
 function nzDate(iso) { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleDateString("en-NZ"); }
 
-// A "custom" ingredient with the same name as a catalogue one is an override, not a duplicate -
-// it replaces the catalogue entry everywhere (dropdowns, defaults) but keeps the catalogue's
-// origin/region so it still groups sensibly. Delete the override and it falls straight back to
-// the catalogue default - that's the "reset to local/global" the ingredient library supports.
-function mergeLibrary(catalogue, custom) {
-  const map = new Map();
-  catalogue.forEach(x => map.set(x.name.toLowerCase(), x));
-  custom.forEach(x => {
-    const base = catalogue.find(c => c.name.toLowerCase() === x.name.toLowerCase()) || {};
-    map.set(x.name.toLowerCase(), Object.assign({}, base, x));
-  });
-  return Array.from(map.values());
-}
-// Groups a merged ingredient library into <optgroup>s by origin/region, with the brewer's chosen
+// Groups an ingredient library (state.inventory.fermentables/hops/yeast) into <optgroup>s by
 // region (state.region) shown first, then the rest of the known regions, then anything uncategorised.
 function regionGroupedOptions(library, currentName, known) {
   const groups = new Map();
@@ -98,9 +86,53 @@ function newBatch(recipeId) {
   const r = state.recipes.find(x => x.id === recipeId);
   return { id: uid(), recipeId, recipeName: r ? r.name : "Unknown Recipe", status: "Planning", brewDate: new Date().toISOString().slice(0, 10), measuredOG: null, measuredFG: null, notes: "" };
 }
+// Adds every catalogue entry for `kind` matching `region` (or every entry, if region === "__all__")
+// into the inventory list, skipping names already present. Returns how many were added.
+function addRegionToInventory(kind, region) {
+  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
+  if (!catalogue) return 0;
+  const existing = new Set(state.inventory[kind].map(i => i.name.toLowerCase()));
+  let added = 0;
+  catalogue.forEach(item => {
+    if (region !== "__all__" && (item.origin || "Other") !== region) return;
+    if (existing.has(item.name.toLowerCase())) return;
+    const row = Object.assign(newInventoryItem(kind), JSON.parse(JSON.stringify(item)));
+    state.inventory[kind].push(row);
+    existing.add(item.name.toLowerCase());
+    added++;
+  });
+  return added;
+}
+// One-time migration: fold the old separate "custom ingredients" library into inventory (an
+// ingredient's spec and its stock are the same row now), then seed the inventory with the
+// brewer's chosen region so the dropdowns aren't empty on a fresh install.
+function migrateInventoryModel() {
+  if (state.inventoryModelV2) return;
+  ["fermentables", "hops", "yeast"].forEach(kind => {
+    const byName = new Map();
+    (state.inventory[kind] || []).forEach(i => byName.set(i.name.toLowerCase(), Object.assign(newInventoryItem(kind), i)));
+    ((state.customIngredients || {})[kind] || []).forEach(c => {
+      const key = c.name.toLowerCase();
+      byName.set(key, Object.assign(byName.get(key) || newInventoryItem(kind), c));
+    });
+    state.inventory[kind] = Array.from(byName.values());
+  });
+  if (!state.catalogueSeeded) {
+    addRegionToInventory("fermentables", state.region);
+    addRegionToInventory("hops", state.region);
+    addRegionToInventory("yeast", state.region);
+    state.catalogueSeeded = true;
+  }
+  delete state.customIngredients;
+  state.inventoryModelV2 = true;
+}
 function newInventoryItem(kind) {
-  const defaults = { fermentables: "kg", hops: "g", yeast: "pkg", misc: "g" };
-  return { id: uid(), name: "", stock: 0, unit: defaults[kind] || "unit", cost: 0 };
+  const stockDefaults = { fermentables: "kg", hops: "g", yeast: "pkg", misc: "g" };
+  const base = { id: uid(), name: "", stock: 0, unit: stockDefaults[kind] || "unit", cost: 0, origin: "" };
+  if (kind === "fermentables") return Object.assign(base, { type: "Grain", ppg: 37, srm: 4, mashable: true });
+  if (kind === "hops") return Object.assign(base, { alpha: 8 });
+  if (kind === "yeast") return Object.assign(base, { type: "Ale", attenuation: 0.75 });
+  return base;
 }
 
 // ---- Persistence ----
@@ -383,6 +415,12 @@ function promptImportBackup(parsed) {
         Tree.pruneOrphans(restored.tree, new Set((restored.recipes || []).map(r => r.id)));
         Object.keys(state).forEach(k => delete state[k]);
         Object.assign(state, restored, { activeSection: "recipes", activeId: (restored.recipes && restored.recipes[0]) ? restored.recipes[0].id : null, activeTab: "design", activeBatchId: null });
+        if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
+        if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
+        if (!state.unitSystem) state.unitSystem = "metric";
+        if (!state.region) state.region = "New Zealand";
+        if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia"];
+        migrateInventoryModel();
         saveToStorage(); closeModal(); renderAll();
         toast("Backup restored");
       });
@@ -866,9 +904,9 @@ function uVal(canonical, kind) { return +Units.toDisplay(canonical, kind, state.
 // ---- Design tab ----
 function designTabHtml(r, style) {
   const d = computeDerived(r);
-  const fermLibrary = mergeLibrary(FERMENTABLES, state.customIngredients.fermentables);
-  const hopLibrary = mergeLibrary(HOPS, state.customIngredients.hops);
-  const yeastLibrary = mergeLibrary(YEASTS, state.customIngredients.yeast);
+  const fermLibrary = state.inventory.fermentables;
+  const hopLibrary = state.inventory.hops;
+  const yeastLibrary = state.inventory.yeast;
   function buildIngredientSelect(library, currentName) {
     const known = library.some(x => x.name === currentName);
     let opts = "";
@@ -1095,12 +1133,14 @@ function wireTabEvents(r) {
       }
       r[tbl][idx][field] = val;
       if (field === "name" && tbl === "fermentables") {
-        const match = mergeLibrary(FERMENTABLES, state.customIngredients.fermentables).find(f => f.name.toLowerCase() === String(val).toLowerCase());
-        if (match) { r.fermentables[idx].ppg = match.ppg; r.fermentables[idx].color = match.srm != null ? match.srm : match.color; r.fermentables[idx].type = match.type; r.fermentables[idx].mashable = match.mashable; }
+        const match = state.inventory.fermentables.find(f => f.name.toLowerCase() === String(val).toLowerCase());
+        if (match) { r.fermentables[idx].ppg = match.ppg; r.fermentables[idx].color = match.srm; r.fermentables[idx].type = match.type; r.fermentables[idx].mashable = match.mashable; }
+        else { const row = Object.assign(newInventoryItem("fermentables"), { name: val }); state.inventory.fermentables.push(row); }
       }
       if (field === "name" && tbl === "hops") {
-        const match = mergeLibrary(HOPS, state.customIngredients.hops).find(h => h.name.toLowerCase() === String(val).toLowerCase());
+        const match = state.inventory.hops.find(h => h.name.toLowerCase() === String(val).toLowerCase());
         if (match) r.hops[idx].alphaPct = match.alpha;
+        else { const row = Object.assign(newInventoryItem("hops"), { name: val }); state.inventory.hops.push(row); }
       }
       saveToStorage();
       if ((field === "name" && (tbl === "fermentables" || tbl === "hops")) || (field === "use" && tbl === "hops")) renderMain(); else refreshComputed(r);
@@ -1130,8 +1170,9 @@ function wireTabEvents(r) {
       val = name;
     }
     r.yeast.name = val;
-    const match = YEASTS.concat(state.customIngredients.yeast).find(y => y.name.toLowerCase() === val.toLowerCase());
+    const match = state.inventory.yeast.find(y => y.name.toLowerCase() === val.toLowerCase());
     if (match) { r.yeast.attenuation = match.attenuation; r.yeast.type = match.type; }
+    else { const row = Object.assign(newInventoryItem("yeast"), { name: val }); state.inventory.yeast.push(row); }
     saveToStorage();
     renderMain();
   });
@@ -1183,15 +1224,15 @@ function wireTabEvents(r) {
 function openSubstitutePicker(e, kind, rowEl, r) {
   let library, applyFn;
   if (kind === "fermentables") {
-    library = mergeLibrary(FERMENTABLES, state.customIngredients.fermentables);
+    library = state.inventory.fermentables;
     applyFn = (item) => {
       const idx = Number(rowEl.dataset.idx);
       snapshotUndo(r);
-      Object.assign(r.fermentables[idx], { name: item.name, ppg: item.ppg, color: item.srm != null ? item.srm : item.color, type: item.type, mashable: item.mashable });
+      Object.assign(r.fermentables[idx], { name: item.name, ppg: item.ppg, color: item.srm, type: item.type, mashable: item.mashable });
       saveToStorage(); renderMain(); toast("Substituted " + item.name);
     };
   } else if (kind === "hops") {
-    library = mergeLibrary(HOPS, state.customIngredients.hops);
+    library = state.inventory.hops;
     applyFn = (item) => {
       const idx = Number(rowEl.dataset.idx);
       snapshotUndo(r);
@@ -1199,7 +1240,7 @@ function openSubstitutePicker(e, kind, rowEl, r) {
       saveToStorage(); renderMain(); toast("Substituted " + item.name);
     };
   } else {
-    library = mergeLibrary(YEASTS, state.customIngredients.yeast);
+    library = state.inventory.yeast;
     applyFn = (item) => {
       snapshotUndo(r);
       r.yeast.name = item.name; r.yeast.attenuation = item.attenuation; r.yeast.type = item.type;
@@ -1227,11 +1268,11 @@ function saveItemToLibrary(kind, rowEl, r) {
   const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
   const catalogueMatch = catalogue.find(x => x.name.toLowerCase() === entry.name.toLowerCase());
   if (catalogueMatch && catalogueMatch.origin) entry.origin = catalogueMatch.origin;
-  const list = state.customIngredients[kind];
+  const list = state.inventory[kind];
   const existingIdx = list.findIndex(x => x.name.toLowerCase() === entry.name.toLowerCase());
-  if (existingIdx !== -1) list[existingIdx] = entry; else list.push(entry);
+  if (existingIdx !== -1) Object.assign(list[existingIdx], entry); else list.push(Object.assign(newInventoryItem(kind), entry));
   saveToStorage();
-  toast('Saved "' + entry.name + '" to your ingredient library');
+  toast('Saved "' + entry.name + '" to inventory');
 }
 
 function setField(r, path, val) { if (path.indexOf(".") !== -1) { const parts = path.split("."); r[parts[0]][parts[1]] = val; } else r[path] = val; }
@@ -1361,144 +1402,97 @@ function handleNewBatch() { const r = state.recipes[0]; const b = newBatch(r.id)
 
 // ================= INVENTORY =================
 const INVENTORY_KINDS = [["fermentables", "Fermentables"], ["hops", "Hops"], ["yeast", "Yeast"], ["misc", "Misc / Fining"]];
+const CATALOGUE_KINDS = ["fermentables", "hops", "yeast"]; // kinds backed by data.js + region bulk-add
 function renderInventoryMain(main) {
+  const filterChips = '<button class="btn btn-sm" data-region-chip="__all__" style="' + (state.inventoryRegionFilter.length === 0 ? "font-weight:700;text-decoration:underline;" : "") + '">All Regions</button>' +
+    REGIONS.map(r => '<button class="btn btn-sm" data-region-chip="' + escapeHtml(r) + '" style="' + (state.inventoryRegionFilter.includes(r) ? "font-weight:700;text-decoration:underline;" : "") + '">' + escapeHtml(r) + '</button>').join("");
   main.innerHTML = '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">Inventory</h1></div>' +
-    INVENTORY_KINDS.map(pair => {
-      const kind = pair[0], label = pair[1];
-      const rows = state.inventory[kind].length ? state.inventory[kind].map((item, i) =>
-        '<tr data-kind="' + kind + '" data-idx="' + i + '">' +
-        '<td><input data-ifield="name" value="' + escapeHtml(item.name) + '"/></td>' +
-        '<td><input type="number" step="0.1" data-ifield="stock" value="' + item.stock + '" style="' + (item.stock <= 0 ? "color:var(--alert);" : "") + '"/></td>' +
-        '<td><select data-ifield="unit">' + ["kg", "g", "lb", "oz", "pkg", "tablet", "item"].map(u => '<option ' + (item.unit === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
-        '<td><input type="number" step="0.01" data-ifield="cost" value="' + item.cost + '"/></td>' +
-        '<td><button class="del-btn" data-del-inv="' + kind + '">\u2715</button></td></tr>'
-      ).join("") : '<tr class="empty-row"><td colspan="5">Nothing tracked yet</td></tr>';
-      return '<div class="card"><h3>' + label + ' <button class="btn btn-sm" data-add-kind="' + kind + '">+ Add Item</button></h3>' +
-        '<table class="ing-table"><thead><tr><th style="width:36%">Name</th><th>Stock</th><th>Unit</th><th>Cost / unit ($)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
-    }).join("") +
-    '<h2 class="display" style="font-size:20px; margin:28px 0 6px;">Ingredient Catalogue</h2>' +
-    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">The built-in hops/malts/yeast that show up in every recipe\u2019s dropdowns, sorted with your region (' + escapeHtml(state.region) + ') first \u2014 change that in the sidebar. \u201cTrack Stock\u201d adds it to the stock list above; \u201cOverride Locally\u201d copies it into your Custom list below so you can edit or replace its numbers. There\u2019s no live hops/malt database this pulls from \u2014 see REFRESH_CATALOGUE.md in the repo for how to refresh this list periodically.</p>' +
-    catalogueCardHtml("fermentables", "Fermentables") +
-    catalogueCardHtml("hops", "Hops") +
-    catalogueCardHtml("yeast", "Yeast") +
-    '<h2 class="display" style="font-size:20px; margin:28px 0 6px;">Ingredient Library</h2>' +
-    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">Custom ingredients you\u2019ve saved (via "Save Item" on a recipe, "Override Locally" above, or added here) \u2014 these show up in the Fermentables/Hops/Yeast dropdowns on every recipe, replacing the catalogue entry of the same name. The \u21ba button on an override resets it back to the catalogue default.</p>' +
-    customLibraryCardHtml("fermentables", "Custom Fermentables", customFermentableRowHtml) +
-    customLibraryCardHtml("hops", "Custom Hops", customHopRowHtml) +
-    customLibraryCardHtml("yeast", "Custom Yeast", customYeastRowHtml);
+    '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px;"><label style="font-size:13px; color:var(--ink-faint);">Filter:</label>' + filterChips + '</div>' +
+    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">This list feeds the Fermentables/Hops/Yeast dropdowns on every recipe \u2014 add an ingredient here and it shows up there, and picking a brand-new name in a recipe adds it here too. \u201c+ Add Region\u201d pulls in the built-in specs for a country\u2019s hops/malts/yeast (there\u2019s no live database behind this \u2014 see REFRESH_CATALOGUE.md for how the list gets refreshed). Click one or more region chips above to hide everything else from view here \u2014 nothing is removed, and every item still shows up in recipe dropdowns regardless of the filter.</p>' +
+    INVENTORY_KINDS.map(pair => inventoryCardHtml(pair[0], pair[1])).join("");
 
-  main.querySelectorAll("[data-cat-track]").forEach(btn => btn.addEventListener("click", () => {
-    const row = btn.closest("[data-cat-kind]"); const kind = row.dataset.catKind, name = row.dataset.catName;
-    const catItem = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind].find(x => x.name === name);
-    if (!catItem) return;
-    const inv = newInventoryItem(kind); inv.name = catItem.name;
-    state.inventory[kind].push(inv); saveToStorage(); renderMain(); toast("Tracking " + catItem.name + " in inventory");
+  main.querySelectorAll("[data-region-chip]").forEach(btn => btn.addEventListener("click", () => {
+    const val = btn.dataset.regionChip;
+    if (val === "__all__") { state.inventoryRegionFilter = []; }
+    else {
+      const i = state.inventoryRegionFilter.indexOf(val);
+      if (i === -1) state.inventoryRegionFilter.push(val); else state.inventoryRegionFilter.splice(i, 1);
+    }
+    saveToStorage(); renderMain();
   }));
-  main.querySelectorAll("[data-cat-override]").forEach(btn => btn.addEventListener("click", () => {
-    const row = btn.closest("[data-cat-kind]"); const kind = row.dataset.catKind, name = row.dataset.catName;
-    const catItem = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind].find(x => x.name === name);
-    if (!catItem) return;
-    state.customIngredients[kind].push(JSON.parse(JSON.stringify(catItem)));
-    saveToStorage(); renderMain(); toast("Added an editable local copy of " + catItem.name);
-  }));
-
   main.querySelectorAll("[data-add-kind]").forEach(btn => btn.addEventListener("click", () => { state.inventory[btn.dataset.addKind].push(newInventoryItem(btn.dataset.addKind)); saveToStorage(); renderMain(); }));
+  main.querySelectorAll("[data-add-region-btn]").forEach(btn => btn.addEventListener("click", () => {
+    const kind = btn.dataset.addRegionBtn;
+    const region = main.querySelector('[data-region-select="' + kind + '"]').value;
+    const added = addRegionToInventory(kind, region);
+    saveToStorage(); renderMain();
+    toast(added ? "Added " + added + " " + region + " item(s)" : "Already have everything from " + region);
+  }));
+  main.querySelectorAll("[data-add-all-btn]").forEach(btn => btn.addEventListener("click", () => {
+    const kind = btn.dataset.addAllBtn;
+    const added = addRegionToInventory(kind, "__all__");
+    saveToStorage(); renderMain();
+    toast(added ? "Added " + added + " item(s) from every region" : "Already have the full catalogue");
+  }));
   main.querySelectorAll("[data-ifield]").forEach(el => el.addEventListener("input", () => {
     const row = el.closest("[data-kind]"); const kind = row.dataset.kind, idx = Number(row.dataset.idx);
-    const val = el.type === "number" ? Number(el.value) : el.value;
-    state.inventory[kind][idx][el.dataset.ifield] = val; saveToStorage();
-  }));
-  main.querySelectorAll("[data-del-inv]").forEach(btn => btn.addEventListener("click", () => { const row = btn.closest("[data-kind]"); state.inventory[btn.dataset.delInv].splice(Number(row.dataset.idx), 1); saveToStorage(); renderMain(); }));
-
-  main.querySelectorAll("[data-add-custom]").forEach(btn => btn.addEventListener("click", () => {
-    const kind = btn.dataset.addCustom;
-    const blank = kind === "fermentables" ? { name: "New Fermentable", type: "Grain", ppg: 37, srm: 4, mashable: true }
-      : kind === "hops" ? { name: "New Hop", alpha: 8 }
-      : { name: "New Yeast", type: "Ale", attenuation: 0.75 };
-    state.customIngredients[kind].push(blank);
-    saveToStorage(); renderMain();
-  }));
-  main.querySelectorAll("[data-clfield]").forEach(el => el.addEventListener("input", () => {
-    const row = el.closest("[data-ckind]"); const kind = row.dataset.ckind, idx = Number(row.dataset.idx);
     let val = el.type === "number" ? Number(el.value) : el.value;
     if (el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
-    const item = state.customIngredients[kind][idx];
-    if (el.dataset.clfield === "attenuationPct") item.attenuation = val / 100;
-    else item[el.dataset.clfield] = val;
-    if (kind === "fermentables" && el.dataset.clfield === "type") item.mashable = ["Grain", "Adjunct"].includes(val);
+    const item = state.inventory[kind][idx];
+    if (el.dataset.ifield === "attenuationPct") item.attenuation = val / 100;
+    else item[el.dataset.ifield] = val;
+    if (kind === "fermentables" && el.dataset.ifield === "type") item.mashable = ["Grain", "Adjunct"].includes(val);
     saveToStorage();
   }));
-  main.querySelectorAll("[data-del-custom]").forEach(btn => btn.addEventListener("click", () => {
-    const row = btn.closest("[data-ckind]");
-    state.customIngredients[row.dataset.ckind].splice(Number(row.dataset.idx), 1);
-    saveToStorage(); renderMain();
-  }));
+  main.querySelectorAll("[data-del-inv]").forEach(btn => btn.addEventListener("click", () => { const row = btn.closest("[data-kind]"); state.inventory[btn.dataset.delInv].splice(Number(row.dataset.idx), 1); saveToStorage(); renderMain(); }));
 }
 
-function catalogueCardHtml(kind, label) {
-  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
-  const order = [state.region].concat(REGIONS.filter(x => x !== state.region));
-  const sorted = catalogue.slice().sort((a, b) => order.indexOf(a.origin || "Other") - order.indexOf(b.origin || "Other"));
-  const trackedNames = new Set(state.inventory[kind].map(i => i.name.toLowerCase()));
-  const overriddenNames = new Set(state.customIngredients[kind].map(i => i.name.toLowerCase()));
-  const rows = sorted.map(item => {
-    const spec = kind === "fermentables" ? item.ppg.toFixed(0) + " PPG / " + uVal(item.srm, "color-srm").toFixed(1) + " " + uLabel("color-srm")
-      : kind === "hops" ? item.alpha.toFixed(1) + "% AA"
-      : Math.round(item.attenuation * 100) + "% attenuation";
-    const tracked = trackedNames.has(item.name.toLowerCase());
-    const overridden = overriddenNames.has(item.name.toLowerCase());
-    return '<tr data-cat-kind="' + kind + '" data-cat-name="' + escapeHtml(item.name) + '">' +
-      '<td>' + escapeHtml(item.name) + '</td>' +
-      '<td style="color:var(--ink-faint);">' + escapeHtml(item.origin || "\u2014") + '</td>' +
-      '<td style="color:var(--ink-faint);">' + spec + '</td>' +
-      '<td class="row-actions">' +
-      '<button class="btn btn-sm" data-cat-track ' + (tracked ? "disabled" : "") + '>' + (tracked ? "Tracked \u2713" : "+ Track Stock") + '</button> ' +
-      '<button class="btn btn-sm" data-cat-override ' + (overridden ? "disabled" : "") + '>' + (overridden ? "Editing below \u2193" : "Override Locally") + '</button>' +
-      '</td></tr>';
-  }).join("");
-  return '<div class="card"><h3>' + label + '</h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:26%">Name</th><th>Region</th><th>Spec</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+function inventoryCardHtml(kind, label) {
+  const isCatalogueKind = CATALOGUE_KINDS.includes(kind);
+  const filterActive = isCatalogueKind && state.inventoryRegionFilter.length > 0;
+  const indexed = state.inventory[kind].map((item, i) => [item, i]);
+  const visible = filterActive ? indexed.filter(pair => state.inventoryRegionFilter.includes(pair[0].origin)) : indexed;
+  const specHeaders = kind === "fermentables" ? "<th>Type</th><th>PPG</th><th>Colour (" + uLabel("color-srm") + ")</th>"
+    : kind === "hops" ? "<th>Alpha %</th>"
+    : kind === "yeast" ? "<th>Type</th><th>Attenuation %</th>"
+    : "";
+  const originHeader = isCatalogueKind ? "<th>Region</th>" : "";
+  const colCount = 4 + (isCatalogueKind ? 1 : 0) + (kind === "fermentables" ? 3 : kind === "hops" ? 1 : kind === "yeast" ? 2 : 0);
+  const emptyMsg = filterActive && state.inventory[kind].length
+    ? "No items from " + state.inventoryRegionFilter.map(escapeHtml).join("/") + " \u2014 change the filter, or + Add Region"
+    : "Nothing tracked yet" + (isCatalogueKind ? " \u2014 add a region below, or + Add Item" : "");
+  const rows = visible.length ? visible.map(pair => inventoryRowHtml(kind, pair[0], pair[1])).join("")
+    : '<tr class="empty-row"><td colspan="' + colCount + '">' + emptyMsg + '</td></tr>';
+  const regionControls = isCatalogueKind
+    ? '<select class="btn btn-sm" data-region-select="' + kind + '">' + REGIONS.map(r => '<option ' + (r === state.region ? "selected" : "") + '>' + escapeHtml(r) + '</option>').join("") + '</select>' +
+      '<button class="btn btn-sm" data-add-region-btn="' + kind + '">+ Add Region</button>' +
+      '<button class="btn btn-sm" data-add-all-btn="' + kind + '">+ Add All Regions</button>'
+    : "";
+  return '<div class="card"><h3>' + label + ' <span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;">' + regionControls + ' <button class="btn btn-sm" data-add-kind="' + kind + '">+ Add Item</button></span></h3>' +
+    '<table class="ing-table"><thead><tr><th style="width:22%">Name</th>' + originHeader + specHeaders + '<th>Stock</th><th>Unit</th><th>Cost / unit ($)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
-function customLibraryCardHtml(kind, label, rowFn) {
-  const items = state.customIngredients[kind];
-  const rows = items.length ? items.map((item, i) => rowFn(item, i)).join("") : null;
-  const headers = kind === "fermentables" ? "<th style='width:28%'>Name</th><th>Type</th><th>PPG</th><th>Colour (" + uLabel("color-srm") + ")</th><th></th>"
-    : kind === "hops" ? "<th style='width:40%'>Name</th><th>Alpha %</th><th></th>"
-    : "<th style='width:34%'>Name</th><th>Type</th><th>Attenuation %</th><th></th>";
-  return '<div class="card"><h3>' + label + ' <button class="btn btn-sm" data-add-custom="' + kind + '">+ Add Custom ' + (kind === "fermentables" ? "Fermentable" : kind === "hops" ? "Hop" : "Yeast") + '</button></h3>' +
-    '<table class="ing-table"><thead><tr>' + headers + '</tr></thead><tbody>' +
-    (rows || '<tr class="empty-row"><td colspan="5">None saved yet</td></tr>') +
-    '</tbody></table></div>';
-}
-function isOverride(kind, name) {
-  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
-  return catalogue.some(x => x.name.toLowerCase() === String(name).toLowerCase());
-}
-function delCustomBtnHtml(kind, name) {
-  return isOverride(kind, name)
-    ? '<button class="del-btn" data-del-custom title="Reset to catalogue default">\u21ba</button>'
-    : '<button class="del-btn" data-del-custom title="Delete">\u2715</button>';
-}
-function customFermentableRowHtml(item, i) {
-  return '<tr data-ckind="fermentables" data-idx="' + i + '">' +
-    '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
-    '<td><select data-clfield="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
-    '<td><input type="number" step="0.5" data-clfield="ppg" value="' + item.ppg + '"/></td>' +
-    '<td><input type="number" step="0.1" data-clfield="srm" data-unitkind="color-srm" value="' + uVal(item.srm, "color-srm") + '"/></td>' +
-    '<td>' + delCustomBtnHtml("fermentables", item.name) + '</td></tr>';
-}
-function customHopRowHtml(item, i) {
-  return '<tr data-ckind="hops" data-idx="' + i + '">' +
-    '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
-    '<td><input type="number" step="0.1" data-clfield="alpha" value="' + item.alpha + '"/></td>' +
-    '<td>' + delCustomBtnHtml("hops", item.name) + '</td></tr>';
-}
-function customYeastRowHtml(item, i) {
-  return '<tr data-ckind="yeast" data-idx="' + i + '">' +
-    '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
-    '<td><select data-clfield="type">' + ["Ale", "Lager", "Ale Dry"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
-    '<td><input type="number" step="1" data-clfield="attenuationPct" value="' + (item.attenuation * 100).toFixed(0) + '"/></td>' +
-    '<td>' + delCustomBtnHtml("yeast", item.name) + '</td></tr>';
+
+function inventoryRowHtml(kind, item, i) {
+  const unitOptions = ["kg", "g", "lb", "oz", "pkg", "tablet", "item"];
+  let specCells = "";
+  if (kind === "fermentables") {
+    specCells = '<td><select data-ifield="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
+      '<td><input type="number" step="0.5" data-ifield="ppg" value="' + item.ppg + '"/></td>' +
+      '<td><input type="number" step="0.1" data-ifield="srm" data-unitkind="color-srm" value="' + uVal(item.srm, "color-srm") + '"/></td>';
+  } else if (kind === "hops") {
+    specCells = '<td><input type="number" step="0.1" data-ifield="alpha" value="' + item.alpha + '"/></td>';
+  } else if (kind === "yeast") {
+    specCells = '<td><select data-ifield="type">' + ["Ale", "Lager", "Ale Dry"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
+      '<td><input type="number" step="1" data-ifield="attenuationPct" value="' + (item.attenuation * 100).toFixed(0) + '"/></td>';
+  }
+  const originCell = CATALOGUE_KINDS.includes(kind) ? '<td style="color:var(--ink-faint);">' + escapeHtml(item.origin || "\u2014") + '</td>' : "";
+  return '<tr data-kind="' + kind + '" data-idx="' + i + '">' +
+    '<td><input data-ifield="name" value="' + escapeHtml(item.name) + '"/></td>' +
+    originCell + specCells +
+    '<td><input type="number" step="0.1" data-ifield="stock" value="' + item.stock + '" style="' + (item.stock <= 0 ? "color:var(--alert);" : "") + '"/></td>' +
+    '<td><select data-ifield="unit">' + unitOptions.map(u => '<option ' + (item.unit === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
+    '<td><input type="number" step="0.01" data-ifield="cost" value="' + item.cost + '"/></td>' +
+    '<td><button class="del-btn" data-del-inv="' + kind + '">\u2715</button></td></tr>';
 }
 
 // ================= EQUIPMENT =================
@@ -1588,7 +1582,9 @@ function init() {
   if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
   if (!state.unitSystem) state.unitSystem = "metric";
   if (!state.region) state.region = "New Zealand";
+  if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia"];
   state.recipes.forEach(migrateRecipe);
+  migrateInventoryModel();
   state.equipment.forEach(e => { if (e.tempAdjustF == null) e.tempAdjustF = 2; });
   Tree.pruneOrphans(state.tree, new Set(state.recipes.map(r => r.id)));
   saveToStorage();
@@ -1664,6 +1660,9 @@ async function handleOpenWorkingFile() {
     if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
     if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
     if (!state.unitSystem) state.unitSystem = "metric";
+    if (!state.region) state.region = "New Zealand";
+    if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia"];
+    migrateInventoryModel();
     saveToStorage(); renderAll(); renderFileWorkspaceControls(); updateUnitToggleLabel();
     toast("Opened " + FileWorkspace.linkedName);
   } catch (e) {

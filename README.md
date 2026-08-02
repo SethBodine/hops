@@ -12,12 +12,25 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
 
 - **Recipe design** — fermentables, hops, yeast, and misc/fining ingredients, with live
   OG/FG/ABV/IBU/colour calculations, per-fermentable **% of grist** and per-hop **IBU
-  contribution**, and a style-guideline comparison against ~14 built-in styles.
+  contribution** (including whirlpool/hop-stand additions, which contribute a real,
+  temperature-scaled IBU amount instead of being ignored), and a style-guideline comparison
+  against ~14 built-in styles.
 - **Cost & batch stats** — total recipe cost, pre-boil volume/gravity, pounds (or kilograms)
   per barrel. **Update Prices** pulls current costs from your Inventory in one click.
-- **Personal ingredient library** — **Save Item** stores a custom fermentable/hop/yeast for
-  reuse across recipes; **Substitute** swaps an ingredient for another from the built-in or
-  personal library while keeping the amount and cost.
+- **Inventory-backed ingredients** — the Fermentables/Hops/Yeast dropdown on every recipe is
+  fed directly from your Inventory, not a fixed built-in list: add an ingredient in Inventory
+  and it shows up in the dropdown; type a brand-new name into a dropdown and it's added to
+  Inventory automatically. **Save Item** and **Substitute** work the same way, reading from
+  and writing to that same list.
+- **World ingredient catalogue, by region** — hops, malts, and yeast strains from New
+  Zealand, Australia, the USA, UK, Germany, Czech Republic, and Slovenia, each tagged with
+  its country of origin. On the Inventory tab, **+ Add Region** pulls in every catalogue item
+  for a chosen country you don't already have, and **+ Add All Regions** pulls in the whole
+  catalogue at once — both skip anything already tracked by name. A region filter (multiple
+  regions at once, e.g. NZ + AU) hides the rest from view without removing anything; your
+  choice is remembered across sessions and travels with backups. There's no live database
+  behind this catalogue — see [REFRESH_CATALOGUE.md](./REFRESH_CATALOGUE.md) for how it gets
+  refreshed periodically.
 - **Undo Last** — reverts the last structural change (add/delete/substitute/scale/price
   update) to a recipe, mirroring BeerSmith's own "Undo Last".
 - **Water chemistry** — base water profile, salt additions tracked separately for **mash vs.
@@ -32,7 +45,8 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
 - **Batches** — separate from the recipe itself; track Planning → Brewing → Fermenting →
   Completed, log actual OG/FG against estimates, and see every batch's history from the
   recipe's own "Brew History" tab so you can tweak the next version with real data.
-- **Inventory** — simple stock tracking for fermentables, hops, yeast, and misc items, with
+- **Inventory** — stock tracking (quantity, unit, cost) for fermentables, hops, yeast, and
+  misc items, alongside each ingredient's own spec (alpha %, PPG, colour, attenuation), with
   a one-click "deduct from inventory" when you start brewing a batch.
 - **Equipment profiles** — reusable batch size / boil-off rate / trub loss / efficiency /
   thermal-mass defaults, applied to any recipe from its Design tab.
@@ -45,13 +59,16 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
 - **Shareable links** — a recipe compresses into a URL that opens straight into the app on
   any device. Optionally shortened via b0x.nz. Opening a link with a recipe you already have
   always asks before doing anything — see [SECURITY.md](./SECURITY.md).
-- **Metric/Imperial toggle** — metric (kg/g/L/°C) by default (NZ locale), Imperial available
-  in one click.
-- **Full backup export/import** — everything (recipes, folders, batches, inventory,
-  equipment, personal ingredient library) as one JSON file.
+- **Metric/Imperial toggle** — metric (kg/g/L/°C/EBC) by default (NZ locale), Imperial
+  (lb/oz/gal/°F/SRM) available in one click; colour switches between SRM and EBC along with
+  everything else.
+- **Full backup export/import** — everything (recipes, folders, batches, inventory with its
+  full ingredient specs, equipment) as one JSON file.
 
-See [FORMULAS.md](./FORMULAS.md) for exactly how every number is calculated, and
-[SECURITY.md](./SECURITY.md) for how the app addresses the OWASP Top 10.
+See [FORMULAS.md](./FORMULAS.md) for exactly how every number is calculated,
+[REFRESH_CATALOGUE.md](./REFRESH_CATALOGUE.md) for how the built-in ingredient catalogue
+gets kept current, and [SECURITY.md](./SECURITY.md) for how the app addresses the OWASP Top
+10.
 
 ## Running it locally
 
@@ -133,7 +150,7 @@ at the top of that file.
 ```
 index.html      Page shell, CSP, script loading order
 style.css        "Instrument panel" visual theme + responsive/mobile layout
-data.js          Ingredient/style/water-salt/equipment-preset reference data
+data.js          Ingredient catalogue (region-tagged), style/water-salt/equipment presets
 calc.js          All brewing formulas, isolated from the UI (see FORMULAS.md)
 units.js         Metric <-> Imperial conversion helpers
 security.js      HTML-escaping, safe JSON parsing, prototype-pollution guards
@@ -153,10 +170,10 @@ from a review of BeerSmith's desktop interface (Design, Water, and ingredient-ta
 screenshots) and aims for close feature parity with it: equipment profiles, mash/sparge
 water agents with per-addition use, mash & sparge acid tracking, style guide comparison,
 strike water temperature, pre-boil gravity, pounds per barrel, per-fermentable grist % and
-per-hop IBU breakdown, a personal ingredient library with Substitute/Save Item, Update
-Prices from inventory, and Undo Last are all modelled directly on BeerSmith's own feature
-set. Hops isn't affiliated with or endorsed by BeerSmith — it's an independent, free,
-browser-based alternative inspired by it.
+per-hop IBU breakdown, an inventory-backed ingredient library with Substitute/Save Item,
+Update Prices from inventory, and Undo Last are all modelled directly on BeerSmith's own
+feature set. Hops isn't affiliated with or endorsed by BeerSmith — it's an independent,
+free, browser-based alternative inspired by it.
 
 Additional features were reviewed in and adapted from:
 
