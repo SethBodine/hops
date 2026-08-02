@@ -32,16 +32,40 @@ const Calc = {
     return (76.08 * (og - fg) / (1.775 - og)) * (fg / 0.794);
   },
 
-  // Tinseth IBU formula, per-addition breakdown. hops: [{amountOz, alphaPct, timeMin, use}], batchVolGal, og
-  // Returns an array parallel to `hops` with the IBU contributed by each addition (0 for non-Boil uses).
+  // Tinseth IBU formula, per-addition breakdown. hops: [{amountOz, alphaPct, timeMin, use, whirlpoolTempF}], batchVolGal, og
+  // Returns an array parallel to `hops` with the IBU contributed by each addition.
+  // Boil additions use the standard Tinseth curve. Whirlpool/hop-stand additions still isomerize
+  // alpha acids (just more slowly, since they're below boiling), so they're calculated the same
+  // way and then scaled down by a temperature factor - see whirlpoolUtilizationFactor(). Dry hop
+  // additions get no heat at all, so they're the one use that stays at 0 IBU.
   ibuBreakdown(hops, batchVolGal, og) {
     const volLiters = batchVolGal * 3.78541;
     return hops.map(h => {
-      if (h.use !== "Boil") return 0; // whirlpool/dry hop contribute negligible/variable IBU, skip for simplicity
+      if (h.use === "Dry Hop") return 0; // no heat, no isomerization, no meaningful IBU contribution
       const utilization = this.tinsethUtilization(h.timeMin, og);
       const aauMg = (h.amountOz * 28.3495 * (h.alphaPct / 100) * 1000) / volLiters; // mg/L alpha acids added
-      return aauMg * utilization; // Tinseth: mg/L alpha acid x utilization = IBU (ppm)
+      let ibu = aauMg * utilization; // Tinseth: mg/L alpha acid x utilization = IBU (ppm)
+      if (h.use === "Whirlpool") {
+        const tempF = h.whirlpoolTempF != null ? h.whirlpoolTempF : 194; // default ~90C, a typical flameout/whirlpool temp
+        ibu *= this.whirlpoolUtilizationFactor(tempF);
+      }
+      return ibu;
     });
+  },
+
+  // Below boiling, alpha-acid isomerization slows dramatically but doesn't stop - hops added
+  // at flameout/whirlpool still contribute real (if reduced) bitterness as the wort cools.
+  // This models that as an Arrhenius-style temperature falloff, fitted against published
+  // whirlpool utilisation figures (Grainfather Brewing, citing Hieronymus/Raspuzzi/Hosom):
+  //   90C -> 49%, 80C -> 23%, 70C -> 10%, 60C -> 4.3%, 50C -> 1.75% (relative to a full boil)
+  // Below ~50C isomerization is negligible for homebrew timescales, so it's floored at 0.
+  whirlpoolUtilizationFactor(tempF) {
+    const tempC = (tempF - 32) * 5 / 9;
+    if (tempC >= 100) return 1;
+    if (tempC < 50) return 0;
+    const tK = tempC + 273.15;
+    const boilK = 373.15;
+    return Math.exp(-9756.6 * (1 / tK - 1 / boilK));
   },
 
   // Tinseth IBU formula, total. hops: [{amountOz, alphaPct, timeMin, use}], batchVolGal, og

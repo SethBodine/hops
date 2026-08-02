@@ -1,66 +1,130 @@
 // ---- Reference brewing data (public-domain style figures, standard homebrew references) ----
 
+// `origin` is the country the ingredient is most associated with/produced in. It's used to group
+// and prioritise the ingredient pickers by region (see buildIngredientSelect in app.js) so a
+// brewer isn't stuck substituting for malts/hops that aren't sold anywhere near them.
 const FERMENTABLES = [
-  { name: "Maris Otter (Crisp)", type: "Grain", ppg: 37, srm: 4, mashable: true },
-  { name: "Pale 2-Row", type: "Grain", ppg: 37, srm: 2, mashable: true },
-  { name: "Pilsner Malt", type: "Grain", ppg: 37, srm: 1.6, mashable: true },
-  { name: "Munich Malt", type: "Grain", ppg: 35, srm: 9, mashable: true },
-  { name: "Vienna Malt", type: "Grain", ppg: 36, srm: 4, mashable: true },
-  { name: "Wheat Malt", type: "Grain", ppg: 38, srm: 2, mashable: true },
-  { name: "Honey Malt", type: "Grain", ppg: 34, srm: 25, mashable: true },
-  { name: "Caramel/Crystal 10L", type: "Grain", ppg: 35, srm: 10, mashable: true },
-  { name: "Caramel/Crystal 40L", type: "Grain", ppg: 34, srm: 40, mashable: true },
-  { name: "Caramel/Crystal 60L", type: "Grain", ppg: 34, srm: 60, mashable: true },
-  { name: "Caramel/Crystal 120L", type: "Grain", ppg: 33, srm: 120, mashable: true },
-  { name: "Biscuit Malt", type: "Grain", ppg: 35, srm: 23, mashable: true },
-  { name: "Victory Malt", type: "Grain", ppg: 34, srm: 28, mashable: true },
-  { name: "Chocolate Malt", type: "Grain", ppg: 28, srm: 350, mashable: true },
-  { name: "Roasted Barley", type: "Grain", ppg: 33, srm: 300, mashable: true },
-  { name: "Black Patent Malt", type: "Grain", ppg: 25, srm: 500, mashable: true },
-  { name: "Flaked Corn", type: "Grain", ppg: 39, srm: 1, mashable: true },
-  { name: "Flaked Oats", type: "Grain", ppg: 33, srm: 2, mashable: true },
-  { name: "Flaked Wheat", type: "Grain", ppg: 36, srm: 2, mashable: true },
-  { name: "Rice Hulls", type: "Adjunct", ppg: 0, srm: 0, mashable: true },
-  { name: "Corn Sugar (Dextrose)", type: "Sugar", ppg: 46, srm: 0, mashable: false },
-  { name: "Cane Sugar", type: "Sugar", ppg: 46, srm: 0, mashable: false },
-  { name: "Honey", type: "Sugar", ppg: 35, srm: 1, mashable: false },
-  { name: "Maple Syrup", type: "Sugar", ppg: 30, srm: 20, mashable: false },
-  { name: "Light DME", type: "Extract", ppg: 44, srm: 3, mashable: false },
-  { name: "Light LME", type: "Extract", ppg: 36, srm: 3, mashable: false },
-  { name: "Amber DME", type: "Extract", ppg: 42, srm: 10, mashable: false },
+  // United States
+  { name: "Pale 2-Row", type: "Grain", ppg: 37, srm: 2, mashable: true, origin: "USA" },
+  { name: "Victory Malt", type: "Grain", ppg: 34, srm: 28, mashable: true, origin: "USA" },
+  { name: "Honey Malt", type: "Grain", ppg: 34, srm: 25, mashable: true, origin: "USA" },
+  // United Kingdom
+  { name: "Maris Otter (Crisp)", type: "Grain", ppg: 37, srm: 4, mashable: true, origin: "UK" },
+  { name: "Golden Promise (Simpsons)", type: "Grain", ppg: 37, srm: 3, mashable: true, origin: "UK" },
+  { name: "Biscuit Malt", type: "Grain", ppg: 35, srm: 23, mashable: true, origin: "UK" },
+  { name: "Black Patent Malt", type: "Grain", ppg: 25, srm: 500, mashable: true, origin: "UK" },
+  { name: "Roasted Barley", type: "Grain", ppg: 33, srm: 300, mashable: true, origin: "UK" },
+  // Germany
+  { name: "Pilsner Malt (Weyermann)", type: "Grain", ppg: 37, srm: 1.6, mashable: true, origin: "Germany" },
+  { name: "Munich Malt", type: "Grain", ppg: 35, srm: 9, mashable: true, origin: "Germany" },
+  { name: "Vienna Malt", type: "Grain", ppg: 36, srm: 4, mashable: true, origin: "Germany" },
+  { name: "Wheat Malt", type: "Grain", ppg: 38, srm: 2, mashable: true, origin: "Germany" },
+  { name: "Chocolate Malt (Weyermann Carafa II)", type: "Grain", ppg: 28, srm: 350, mashable: true, origin: "Germany" },
+  // New Zealand (Gladfield) - colours quoted in EBC on the spec sheet, converted here to SRM
+  // (EBC / 1.97) to match this file's SRM convention; the app displays EBC back out again
+  // automatically when the interface is set to metric units.
+  { name: "Gladfield Ale Malt", type: "Grain", ppg: 37, srm: 3.0, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Pilsner Malt", type: "Grain", ppg: 37, srm: 1.9, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Gladiator Malt", type: "Grain", ppg: 36, srm: 4.2, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield American Ale Malt", type: "Grain", ppg: 37, srm: 3.6, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Munich Malt", type: "Grain", ppg: 35, srm: 9.1, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Wheat Malt", type: "Grain", ppg: 38, srm: 2.0, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Manuka Smoked Malt", type: "Grain", ppg: 36, srm: 4.6, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Light Crystal Malt", type: "Grain", ppg: 34, srm: 15.2, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Medium Crystal Malt", type: "Grain", ppg: 34, srm: 30.5, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Dark Crystal Malt", type: "Grain", ppg: 33, srm: 55.8, mashable: true, origin: "New Zealand" },
+  { name: "Gladfield Biscuit Malt", type: "Grain", ppg: 35, srm: 20.3, mashable: true, origin: "New Zealand" },
+  // Australia
+  { name: "Joe White Traditional Ale Malt", type: "Grain", ppg: 37, srm: 3, mashable: true, origin: "Australia" },
+  { name: "Joe White Pilsner Malt", type: "Grain", ppg: 37, srm: 1.7, mashable: true, origin: "Australia" },
+  { name: "Bairds Wheat Malt", type: "Grain", ppg: 38, srm: 2, mashable: true, origin: "Australia" },
+  // Caramel/crystal (generic, sold under this name almost everywhere)
+  { name: "Caramel/Crystal 10L", type: "Grain", ppg: 35, srm: 10, mashable: true, origin: "Generic" },
+  { name: "Caramel/Crystal 40L", type: "Grain", ppg: 34, srm: 40, mashable: true, origin: "Generic" },
+  { name: "Caramel/Crystal 60L", type: "Grain", ppg: 34, srm: 60, mashable: true, origin: "Generic" },
+  { name: "Caramel/Crystal 120L", type: "Grain", ppg: 33, srm: 120, mashable: true, origin: "Generic" },
+  { name: "Chocolate Malt", type: "Grain", ppg: 28, srm: 350, mashable: true, origin: "Generic" },
+  { name: "Flaked Corn", type: "Grain", ppg: 39, srm: 1, mashable: true, origin: "Generic" },
+  { name: "Flaked Oats", type: "Grain", ppg: 33, srm: 2, mashable: true, origin: "Generic" },
+  { name: "Flaked Wheat", type: "Grain", ppg: 36, srm: 2, mashable: true, origin: "Generic" },
+  { name: "Rice Hulls", type: "Adjunct", ppg: 0, srm: 0, mashable: true, origin: "Generic" },
+  { name: "Corn Sugar (Dextrose)", type: "Sugar", ppg: 46, srm: 0, mashable: false, origin: "Generic" },
+  { name: "Cane Sugar", type: "Sugar", ppg: 46, srm: 0, mashable: false, origin: "Generic" },
+  { name: "Honey", type: "Sugar", ppg: 35, srm: 1, mashable: false, origin: "Generic" },
+  { name: "Maple Syrup", type: "Sugar", ppg: 30, srm: 20, mashable: false, origin: "Generic" },
+  { name: "Light DME", type: "Extract", ppg: 44, srm: 3, mashable: false, origin: "Generic" },
+  { name: "Light LME", type: "Extract", ppg: 36, srm: 3, mashable: false, origin: "Generic" },
+  { name: "Amber DME", type: "Extract", ppg: 42, srm: 10, mashable: false, origin: "Generic" },
 ];
 
 const HOPS = [
-  { name: "Northern Brewer", alpha: 8.5 },
-  { name: "Cascade", alpha: 6.0 },
-  { name: "Centennial", alpha: 10.0 },
-  { name: "Citra", alpha: 12.5 },
-  { name: "Simcoe", alpha: 13.0 },
-  { name: "Mosaic", alpha: 11.5 },
-  { name: "Fuggle", alpha: 4.8 },
-  { name: "East Kent Goldings", alpha: 5.5 },
-  { name: "Willamette", alpha: 5.5 },
-  { name: "Saaz", alpha: 3.5 },
-  { name: "Hallertau", alpha: 4.0 },
-  { name: "Chinook", alpha: 12.0 },
-  { name: "Amarillo", alpha: 9.0 },
-  { name: "Magnum", alpha: 14.0 },
-  { name: "Nugget", alpha: 13.0 },
+  // United States
+  { name: "Cascade", alpha: 6.0, origin: "USA" },
+  { name: "Centennial", alpha: 10.0, origin: "USA" },
+  { name: "Citra", alpha: 12.5, origin: "USA" },
+  { name: "Simcoe", alpha: 13.0, origin: "USA" },
+  { name: "Mosaic", alpha: 11.5, origin: "USA" },
+  { name: "Chinook", alpha: 12.0, origin: "USA" },
+  { name: "Amarillo", alpha: 9.0, origin: "USA" },
+  { name: "Magnum", alpha: 14.0, origin: "USA" },
+  { name: "Nugget", alpha: 13.0, origin: "USA" },
+  { name: "Willamette", alpha: 5.5, origin: "USA" },
+  { name: "Northern Brewer", alpha: 8.5, origin: "USA" },
+  // United Kingdom
+  { name: "Fuggle", alpha: 4.8, origin: "UK" },
+  { name: "East Kent Goldings", alpha: 5.5, origin: "UK" },
+  { name: "Challenger", alpha: 7.5, origin: "UK" },
+  { name: "First Gold", alpha: 8.0, origin: "UK" },
+  { name: "Bramling Cross", alpha: 6.0, origin: "UK" },
+  // Germany
+  { name: "Hallertau Mittelfr\u00fch", alpha: 4.0, origin: "Germany" },
+  { name: "Tettnanger", alpha: 4.5, origin: "Germany" },
+  { name: "Perle", alpha: 7.5, origin: "Germany" },
+  { name: "Spalt", alpha: 4.5, origin: "Germany" },
+  { name: "Hersbrucker", alpha: 3.5, origin: "Germany" },
+  // Czech Republic
+  { name: "Saaz", alpha: 3.5, origin: "Czech Republic" },
+  // Slovenia
+  { name: "Styrian Goldings (Celeia)", alpha: 4.5, origin: "Slovenia" },
+  // New Zealand
+  { name: "Nelson Sauvin", alpha: 12.0, origin: "New Zealand" },
+  { name: "Motueka", alpha: 7.0, origin: "New Zealand" },
+  { name: "Riwaka", alpha: 6.5, origin: "New Zealand" },
+  { name: "Wai-iti", alpha: 3.0, origin: "New Zealand" },
+  { name: "Rakau", alpha: 11.0, origin: "New Zealand" },
+  { name: "Waimea", alpha: 17.0, origin: "New Zealand" },
+  { name: "Green Bullet", alpha: 13.0, origin: "New Zealand" },
+  { name: "Pacifica", alpha: 5.5, origin: "New Zealand" },
+  { name: "Southern Cross", alpha: 13.0, origin: "New Zealand" },
+  { name: "Dr Rudi", alpha: 11.0, origin: "New Zealand" },
+  // Australia
+  { name: "Galaxy", alpha: 14.0, origin: "Australia" },
+  { name: "Vic Secret", alpha: 16.0, origin: "Australia" },
+  { name: "Ella", alpha: 15.0, origin: "Australia" },
+  { name: "Topaz", alpha: 16.5, origin: "Australia" },
+  { name: "Enigma", alpha: 17.5, origin: "Australia" },
+  { name: "Summer", alpha: 5.5, origin: "Australia" },
 ];
 
 const YEASTS = [
-  { name: "English Ale (White Labs #WLP002)", attenuation: 0.67, type: "Ale" },
-  { name: "American Ale (Wyeast #1056)", attenuation: 0.75, type: "Ale" },
-  { name: "California Ale (WLP001)", attenuation: 0.75, type: "Ale" },
-  { name: "London Ale III (WLP013)", attenuation: 0.71, type: "Ale" },
-  { name: "Irish Ale (WLP004)", attenuation: 0.71, type: "Ale" },
-  { name: "Belgian Saison (WLP565)", attenuation: 0.78, type: "Ale" },
-  { name: "German Lager (WLP830)", attenuation: 0.74, type: "Lager" },
-  { name: "Kolsch (WLP029)", attenuation: 0.72, type: "Ale" },
-  { name: "Hefeweizen (WLP300)", attenuation: 0.75, type: "Ale" },
-  { name: "Dry English Ale (S-04)", attenuation: 0.72, type: "Ale Dry" },
-  { name: "Safale US-05", attenuation: 0.78, type: "Ale Dry" },
+  { name: "English Ale (White Labs #WLP002)", attenuation: 0.67, type: "Ale", origin: "UK" },
+  { name: "London Ale III (WLP013)", attenuation: 0.71, type: "Ale", origin: "UK" },
+  { name: "Irish Ale (WLP004)", attenuation: 0.71, type: "Ale", origin: "UK" },
+  { name: "Dry English Ale (S-04)", attenuation: 0.72, type: "Ale Dry", origin: "UK" },
+  { name: "American Ale (Wyeast #1056)", attenuation: 0.75, type: "Ale", origin: "USA" },
+  { name: "California Ale (WLP001)", attenuation: 0.75, type: "Ale", origin: "USA" },
+  { name: "Safale US-05", attenuation: 0.78, type: "Ale Dry", origin: "USA" },
+  { name: "Belgian Saison (WLP565)", attenuation: 0.78, type: "Ale", origin: "Belgium" },
+  { name: "German Lager (WLP830)", attenuation: 0.74, type: "Lager", origin: "Germany" },
+  { name: "Kolsch (WLP029)", attenuation: 0.72, type: "Ale", origin: "Germany" },
+  { name: "Hefeweizen (WLP300)", attenuation: 0.75, type: "Ale", origin: "Germany" },
+  { name: "Nottingham Ale (Lallemand)", attenuation: 0.75, type: "Ale Dry", origin: "New Zealand" },
+  { name: "Mangrove Jack's M42 New World Strong Ale", attenuation: 0.75, type: "Ale Dry", origin: "New Zealand" },
 ];
+
+// All the recognised origin/region values above, in a sensible display order (used to build
+// grouped <optgroup> ingredient pickers - see buildIngredientSelect in app.js).
+const REGIONS = ["New Zealand", "Australia", "USA", "UK", "Germany", "Czech Republic", "Slovenia", "Belgium", "Generic"];
 
 // Simplified BJCP-style guideline ranges: [OG lo/hi, FG lo/hi, IBU lo/hi, SRM lo/hi, ABV lo/hi]
 const STYLES = [

@@ -10,10 +10,17 @@ const Units = {
   lToGal: v => v / 3.785411784,
   fToC: v => (v - 32) * 5 / 9,
   cToF: v => v * 9 / 5 + 32,
+  // SRM/Lovibond and EBC both describe wort/beer colour; EBC is the convention used across
+  // most of the world outside North America (NZ, AU, UK, EU brewing sheets are usually EBC).
+  // Canonical storage stays in SRM (matches BeerXML's <COLOR> convention); EBC is a display-only
+  // conversion, same pattern as every other unit here.
+  srmToEbc: v => v * 1.97,
+  ebcToSrm: v => v / 1.97,
 
   // Convert a canonical (US) value to the display value for the current unit system
   toDisplay(canonicalVal, kind, system) {
     const v = Number(canonicalVal) || 0;
+    if (kind === "color-srm") return system === "metric" ? this.srmToEbc(v) : v;
     if (system !== "metric") return v;
     if (kind === "weight-lb") return this.lbToKg(v);
     if (kind === "weight-oz") return this.ozToG(v);
@@ -25,6 +32,7 @@ const Units = {
   // Convert a display value (in the current unit system) back to canonical US units for storage
   toCanonical(displayVal, kind, system) {
     const v = Number(displayVal) || 0;
+    if (kind === "color-srm") return system === "metric" ? this.ebcToSrm(v) : v;
     if (system !== "metric") return v;
     if (kind === "weight-lb") return this.kgToLb(v);
     if (kind === "weight-oz") return this.gToOz(v);
@@ -34,6 +42,7 @@ const Units = {
   },
 
   unitLabel(kind, system) {
+    if (kind === "color-srm") return system === "metric" ? "EBC" : "SRM";
     if (system !== "metric") {
       return { "weight-lb": "lb", "weight-oz": "oz", "volume-gal": "gal", "temp-f": "\u00b0F" }[kind] || "";
     }
@@ -42,6 +51,7 @@ const Units = {
 
   step(kind, system) {
     if (kind === "temp-f") return 1;
+    if (kind === "color-srm") return 0.1;
     if (system === "metric" && kind === "weight-oz") return 1;
     if (kind === "weight-oz") return 0.1;
     return 0.01;

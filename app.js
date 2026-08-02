@@ -10,6 +10,7 @@ let state = {
   inventory: { fermentables: [], hops: [], yeast: [], misc: [] },
   customIngredients: { fermentables: [], hops: [], yeast: [] },
   unitSystem: "metric", // NZ default. "us" is the alternative.
+  region: "New Zealand", // which country's hops/malts/yeast show first in the ingredient pickers
   activeSection: "recipes", // recipes | batches | inventory | equipment | tools
   activeId: null,
   activeTab: "design",
@@ -18,6 +19,40 @@ let state = {
 
 function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
 function nzDate(iso) { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleDateString("en-NZ"); }
+
+// A "custom" ingredient with the same name as a catalogue one is an override, not a duplicate -
+// it replaces the catalogue entry everywhere (dropdowns, defaults) but keeps the catalogue's
+// origin/region so it still groups sensibly. Delete the override and it falls straight back to
+// the catalogue default - that's the "reset to local/global" the ingredient library supports.
+function mergeLibrary(catalogue, custom) {
+  const map = new Map();
+  catalogue.forEach(x => map.set(x.name.toLowerCase(), x));
+  custom.forEach(x => {
+    const base = catalogue.find(c => c.name.toLowerCase() === x.name.toLowerCase()) || {};
+    map.set(x.name.toLowerCase(), Object.assign({}, base, x));
+  });
+  return Array.from(map.values());
+}
+// Groups a merged ingredient library into <optgroup>s by origin/region, with the brewer's chosen
+// region (state.region) shown first, then the rest of the known regions, then anything uncategorised.
+function regionGroupedOptions(library, currentName, known) {
+  const groups = new Map();
+  library.forEach(x => {
+    const g = x.origin || "Other";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(x);
+  });
+  const order = [state.region].concat(REGIONS.filter(r => r !== state.region)).concat(["Other"]);
+  let html = "";
+  order.forEach(g => {
+    const items = groups.get(g);
+    if (!items || !items.length) return;
+    html += '<optgroup label="' + escapeHtml(g) + '">' + items.map(x => '<option value="' + escapeHtml(x.name) + '" ' + (known && x.name === currentName ? "selected" : "") + '>' + escapeHtml(x.name) + '</option>').join("") + '</optgroup>';
+    groups.delete(g);
+  });
+  groups.forEach((items, g) => { html += '<optgroup label="' + escapeHtml(g) + '">' + items.map(x => '<option value="' + escapeHtml(x.name) + '" ' + (known && x.name === currentName ? "selected" : "") + '>' + escapeHtml(x.name) + '</option>').join("") + '</optgroup>'; });
+  return html;
+}
 
 // ---- Factories ----
 function newRecipe() {
@@ -32,7 +67,7 @@ function newRecipe() {
     efficiencyPct: 70,
     styleName: "American Pale Ale",
     fermentables: [{ name: "Maris Otter (Crisp)", type: "Grain", amountLb: 10, ppg: 37, color: 4, mashable: true, cost: 0 }],
-    hops: [{ name: "Cascade", amountOz: 1, alphaPct: 6.0, timeMin: 60, use: "Boil", cost: 0 }],
+    hops: [{ name: "Cascade", amountOz: 1, alphaPct: 6.0, timeMin: 60, use: "Boil", whirlpoolTempF: 194, cost: 0 }],
     yeast: { name: "American Ale (Wyeast #1056)", type: "Ale", attenuation: 0.75, cost: 0 },
     misc: [],
     mashWaterVolGal: 4.5,
@@ -111,6 +146,7 @@ function migrateRecipe(r) {
   if (!r.fermentationProfileName) r.fermentationProfileName = "Custom";
   if (r.preBoilVolGal === undefined) r.preBoilVolGal = null;
   (r.waterSalts || []).forEach(s => { if (!s.use) s.use = "Mash"; });
+  (r.hops || []).forEach(h => { if (h.whirlpoolTempF == null) h.whirlpoolTempF = 194; });
   return r;
 }
 
@@ -134,7 +170,7 @@ function computeDerived(r) {
   const og = Calc.estimateOG(ferms, Number(r.batchVolGal) || 1, Number(r.efficiencyPct) || 70);
   const fg = Calc.estimateFG(og, Number(r.yeast.attenuation) || 0.75);
   const abv = Calc.estimateABV(og, fg);
-  const hopsForCalc = r.hops.map(h => ({ amountOz: Number(h.amountOz) || 0, alphaPct: Number(h.alphaPct) || 0, timeMin: Number(h.timeMin) || 0, use: h.use }));
+  const hopsForCalc = r.hops.map(h => ({ amountOz: Number(h.amountOz) || 0, alphaPct: Number(h.alphaPct) || 0, timeMin: Number(h.timeMin) || 0, use: h.use, whirlpoolTempF: h.whirlpoolTempF != null ? Number(h.whirlpoolTempF) : 194 }));
   const ibuBreakdown = Calc.ibuBreakdown(hopsForCalc, Number(r.batchVolGal) || 1, og);
   const ibu = ibuBreakdown.reduce((sum, v) => sum + v, 0);
   const srm = Calc.estimateSRM(ferms, Number(r.batchVolGal) || 1);
@@ -793,10 +829,15 @@ function gaugeHtml(label, display, unit, value, range) {
   return '<div class="gauge ' + (inRange === false ? "out" : "") + '"><div class="label">' + label + '</div><div class="value">' + display + '<span class="unit">' + unit + '</span></div>' +
     (range ? '<div class="range-track"><div class="range-marker" style="left:' + pct + '%"></div></div><div class="range-label">' + range[0] + '\u2013' + range[1] + ' style range</div>' : '<div class="range-label">no style selected</div>') + '</div>';
 }
+// srm is always the canonical (SRM) value; range (if given) is also in canonical SRM - both are
+// converted to the active display unit (SRM or EBC) here, at the point of showing them.
 function colorGaugeHtml(srm, range) {
   const inRange = range ? Calc.inRange(srm, range) : null;
-  return '<div class="gauge ' + (inRange === false ? "out" : "") + '"><div class="label">Colour</div><div class="value" style="align-items:center;"><div class="color-swatch" style="background:' + Calc.srmToRgb(srm) + '"></div><span style="margin-left:8px;">' + srm.toFixed(1) + '<span class="unit">SRM</span></span></div>' +
-    (range ? '<div class="range-label" style="margin-top:10px;">' + range[0] + '\u2013' + range[1] + ' style range</div>' : "") + '</div>';
+  const unit = uLabel("color-srm");
+  const dispVal = uVal(srm, "color-srm");
+  const dispRange = range ? range.map(v => uVal(v, "color-srm")) : null;
+  return '<div class="gauge ' + (inRange === false ? "out" : "") + '"><div class="label">Colour</div><div class="value" style="align-items:center;"><div class="color-swatch" style="background:' + Calc.srmToRgb(srm) + '"></div><span style="margin-left:8px;">' + dispVal.toFixed(1) + '<span class="unit">' + unit + '</span></span></div>' +
+    (dispRange ? '<div class="range-label" style="margin-top:10px;">' + dispRange[0].toFixed(1) + '\u2013' + dispRange[1].toFixed(1) + ' ' + unit + ' style range</div>' : "") + '</div>';
 }
 
 function renderSanityBanner(d, r) {
@@ -825,16 +866,15 @@ function uVal(canonical, kind) { return +Units.toDisplay(canonical, kind, state.
 // ---- Design tab ----
 function designTabHtml(r, style) {
   const d = computeDerived(r);
-  const fermLibrary = FERMENTABLES.concat(state.customIngredients.fermentables);
-  const hopLibrary = HOPS.concat(state.customIngredients.hops);
-  const yeastLibrary = YEASTS.concat(state.customIngredients.yeast);
+  const fermLibrary = mergeLibrary(FERMENTABLES, state.customIngredients.fermentables);
+  const hopLibrary = mergeLibrary(HOPS, state.customIngredients.hops);
+  const yeastLibrary = mergeLibrary(YEASTS, state.customIngredients.yeast);
   function buildIngredientSelect(library, currentName) {
-    const names = library.map(x => x.name);
-    const known = names.includes(currentName);
+    const known = library.some(x => x.name === currentName);
     let opts = "";
     if (!known && currentName) opts += '<option value="' + escapeHtml(currentName) + '" selected>' + escapeHtml(currentName) + ' (custom)</option>';
     opts += '<option value="__custom__">\u2014 Custom Name\u2026 \u2014</option>';
-    opts += library.map(x => '<option value="' + escapeHtml(x.name) + '" ' + (known && x.name === currentName ? "selected" : "") + '>' + escapeHtml(x.name) + '</option>').join("");
+    opts += regionGroupedOptions(library, currentName, known);
     return opts;
   }
   const equipOptions = state.equipment.map(e => '<option value="' + e.id + '" ' + (r.equipmentId === e.id ? "selected" : "") + '>' + escapeHtml(e.name) + '</option>').join("");
@@ -846,7 +886,7 @@ function designTabHtml(r, style) {
     '<td><input type="number" step="0.1" data-tbl="fermentables" data-field="amountLb" data-unitkind="weight-lb" value="' + uVal(f.amountLb, "weight-lb") + '"/></td>' +
     '<td><select data-tbl="fermentables" data-field="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (f.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
     '<td><input type="number" step="0.5" data-tbl="fermentables" data-field="ppg" value="' + f.ppg + '"/></td>' +
-    '<td><input type="number" step="0.5" data-tbl="fermentables" data-field="color" value="' + f.color + '"/></td>' +
+    '<td><input type="number" step="0.1" data-tbl="fermentables" data-field="color" data-unitkind="color-srm" value="' + uVal(f.color, "color-srm") + '"/></td>' +
     '<td class="num grist-pct">' + (d.grainPercents[i] || 0).toFixed(1) + '%</td>' +
     '<td><input type="number" step="0.01" data-tbl="fermentables" data-field="cost" value="' + (f.cost || 0) + '"/></td>' +
     '<td class="row-actions"><button class="btn btn-sm" data-substitute="fermentables">Sub</button><button class="btn btn-sm" data-save-item="fermentables">Save</button><button class="del-btn" data-del="fermentables">\u2715</button></td></tr>'
@@ -859,10 +899,11 @@ function designTabHtml(r, style) {
     '<td><input type="number" step="0.1" data-tbl="hops" data-field="alphaPct" value="' + h.alphaPct + '"/></td>' +
     '<td><input type="number" step="1" data-tbl="hops" data-field="timeMin" value="' + h.timeMin + '"/></td>' +
     '<td><select data-tbl="hops" data-field="use">' + ["Boil", "Whirlpool", "Dry Hop"].map(u => '<option ' + (h.use === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
+    '<td>' + (h.use === "Whirlpool" ? '<input type="number" step="1" data-tbl="hops" data-field="whirlpoolTempF" data-unitkind="temp-f" value="' + uVal(h.whirlpoolTempF != null ? h.whirlpoolTempF : 194, "temp-f") + '" title="Whirlpool/stand temperature - the single biggest factor in how much IBU a whirlpool addition contributes"/>' : '<span style="color:var(--ink-faint);">\u2014</span>') + '</td>' +
     '<td class="num hop-ibu">' + (d.ibuBreakdown[i] || 0).toFixed(1) + '</td>' +
     '<td><input type="number" step="0.01" data-tbl="hops" data-field="cost" value="' + (h.cost || 0) + '"/></td>' +
     '<td class="row-actions"><button class="btn btn-sm" data-substitute="hops">Sub</button><button class="btn btn-sm" data-save-item="hops">Save</button><button class="del-btn" data-del="hops">\u2715</button></td></tr>'
-  ).join("") : '<tr class="empty-row"><td colspan="8">No hops yet</td></tr>';
+  ).join("") : '<tr class="empty-row"><td colspan="9">No hops yet</td></tr>';
 
   const miscRows = r.misc.length ? r.misc.map((m, i) =>
     '<tr data-idx="' + i + '">' +
@@ -885,9 +926,9 @@ function designTabHtml(r, style) {
     '<div class="field"><label>Style</label><select data-field="styleName">' + styleOptions + '</select></div>' +
     '</div></div>' +
     '<div class="card"><h3>Fermentables <button class="btn btn-sm" data-action="addFermentable">+ Add Fermentable</button></h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:22%">Name</th><th>Amount (' + uLabel("weight-lb") + ')</th><th>Type</th><th>PPG</th><th>Colour (SRM)</th><th>% Grist</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + fermRows + '</tbody></table></div>' +
+    '<table class="ing-table"><thead><tr><th style="width:22%">Name</th><th>Amount (' + uLabel("weight-lb") + ')</th><th>Type</th><th>PPG</th><th>Colour (' + uLabel("color-srm") + ')</th><th>% Grist</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + fermRows + '</tbody></table></div>' +
     '<div class="card"><h3>Hops <button class="btn btn-sm" data-action="addHop">+ Add Hop</button></h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:18%">Name</th><th>Amount (' + uLabel("weight-oz") + ')</th><th>Alpha %</th><th>Time (min)</th><th>Use</th><th>IBU</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + hopRows + '</tbody></table></div>' +
+    '<table class="ing-table"><thead><tr><th style="width:18%">Name</th><th>Amount (' + uLabel("weight-oz") + ')</th><th>Alpha %</th><th>Time (min)</th><th>Use</th><th>Stand Temp (' + uLabel("temp-f") + ')</th><th>IBU</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + hopRows + '</tbody></table></div>' +
     '<div class="card"><h3>Yeast <span><button class="btn btn-sm" data-substitute="yeast">Substitute</button> <button class="btn btn-sm" data-save-item="yeast">Save Item</button></span></h3><div class="field-grid">' +
     '<div class="field"><label>Strain</label><select data-field="yeastName">' + buildIngredientSelect(yeastLibrary, r.yeast.name) + '</select></div>' +
     '<div class="field"><label>Attenuation (%)</label><input type="number" step="1" data-field="yeastAttenuation" value="' + (r.yeast.attenuation * 100).toFixed(0) + '"/></div>' +
@@ -913,7 +954,7 @@ function styleCompareHtml(r, style) {
     ["Final Gravity", d.fg, style.fg, v => v.toFixed(3)],
     ["ABV", d.abv, style.abv, v => v.toFixed(1) + "%"],
     ["Bitterness (IBU)", d.ibu, style.ibu, v => Math.round(v)],
-    ["Colour (SRM)", d.srm, style.srm, v => v.toFixed(1)],
+    ["Colour (" + uLabel("color-srm") + ")", uVal(d.srm, "color-srm"), style.srm.map(v => uVal(v, "color-srm")), v => v.toFixed(1)],
   ];
   return rows.map(row => {
     const label = row[0], val = row[1], range = row[2], fmt = row[3];
@@ -1054,15 +1095,15 @@ function wireTabEvents(r) {
       }
       r[tbl][idx][field] = val;
       if (field === "name" && tbl === "fermentables") {
-        const match = FERMENTABLES.concat(state.customIngredients.fermentables).find(f => f.name.toLowerCase() === String(val).toLowerCase());
+        const match = mergeLibrary(FERMENTABLES, state.customIngredients.fermentables).find(f => f.name.toLowerCase() === String(val).toLowerCase());
         if (match) { r.fermentables[idx].ppg = match.ppg; r.fermentables[idx].color = match.srm != null ? match.srm : match.color; r.fermentables[idx].type = match.type; r.fermentables[idx].mashable = match.mashable; }
       }
       if (field === "name" && tbl === "hops") {
-        const match = HOPS.concat(state.customIngredients.hops).find(h => h.name.toLowerCase() === String(val).toLowerCase());
+        const match = mergeLibrary(HOPS, state.customIngredients.hops).find(h => h.name.toLowerCase() === String(val).toLowerCase());
         if (match) r.hops[idx].alphaPct = match.alpha;
       }
       saveToStorage();
-      if (field === "name" && (tbl === "fermentables" || tbl === "hops")) renderMain(); else refreshComputed(r);
+      if ((field === "name" && (tbl === "fermentables" || tbl === "hops")) || (field === "use" && tbl === "hops")) renderMain(); else refreshComputed(r);
     });
   });
   panel.querySelectorAll("[data-del]").forEach(btn => btn.addEventListener("click", () => {
@@ -1071,7 +1112,7 @@ function wireTabEvents(r) {
   }));
   const actions = {
     addFermentable: () => r.fermentables.push({ name: FERMENTABLES[0].name, type: FERMENTABLES[0].type, amountLb: 1, ppg: FERMENTABLES[0].ppg, color: FERMENTABLES[0].srm, mashable: FERMENTABLES[0].mashable, cost: 0 }),
-    addHop: () => r.hops.push({ name: HOPS[0].name, amountOz: 1, alphaPct: HOPS[0].alpha, timeMin: 60, use: "Boil", cost: 0 }),
+    addHop: () => r.hops.push({ name: HOPS[0].name, amountOz: 1, alphaPct: HOPS[0].alpha, timeMin: 60, use: "Boil", whirlpoolTempF: 194, cost: 0 }),
     addMisc: () => r.misc.push({ name: "Whirlfloc Tablet", amount: 1, unit: "tablet", use: "Boil", cost: 0 }),
     addSalt: () => r.waterSalts.push({ name: Object.keys(WATER_SALTS)[0], grams: 1 }),
     addMashStep: () => r.mashSteps.push({ name: "Mash Out", temp: 168, time: 10 }),
@@ -1142,7 +1183,7 @@ function wireTabEvents(r) {
 function openSubstitutePicker(e, kind, rowEl, r) {
   let library, applyFn;
   if (kind === "fermentables") {
-    library = FERMENTABLES.concat(state.customIngredients.fermentables);
+    library = mergeLibrary(FERMENTABLES, state.customIngredients.fermentables);
     applyFn = (item) => {
       const idx = Number(rowEl.dataset.idx);
       snapshotUndo(r);
@@ -1150,7 +1191,7 @@ function openSubstitutePicker(e, kind, rowEl, r) {
       saveToStorage(); renderMain(); toast("Substituted " + item.name);
     };
   } else if (kind === "hops") {
-    library = HOPS.concat(state.customIngredients.hops);
+    library = mergeLibrary(HOPS, state.customIngredients.hops);
     applyFn = (item) => {
       const idx = Number(rowEl.dataset.idx);
       snapshotUndo(r);
@@ -1158,7 +1199,7 @@ function openSubstitutePicker(e, kind, rowEl, r) {
       saveToStorage(); renderMain(); toast("Substituted " + item.name);
     };
   } else {
-    library = YEASTS.concat(state.customIngredients.yeast);
+    library = mergeLibrary(YEASTS, state.customIngredients.yeast);
     applyFn = (item) => {
       snapshotUndo(r);
       r.yeast.name = item.name; r.yeast.attenuation = item.attenuation; r.yeast.type = item.type;
@@ -1183,6 +1224,9 @@ function saveItemToLibrary(kind, rowEl, r) {
     entry = { name: r.yeast.name, type: r.yeast.type, attenuation: r.yeast.attenuation };
   }
   if (!entry.name) { toast("Give it a name first"); return; }
+  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
+  const catalogueMatch = catalogue.find(x => x.name.toLowerCase() === entry.name.toLowerCase());
+  if (catalogueMatch && catalogueMatch.origin) entry.origin = catalogueMatch.origin;
   const list = state.customIngredients[kind];
   const existingIdx = list.findIndex(x => x.name.toLowerCase() === entry.name.toLowerCase());
   if (existingIdx !== -1) list[existingIdx] = entry; else list.push(entry);
@@ -1332,11 +1376,31 @@ function renderInventoryMain(main) {
       return '<div class="card"><h3>' + label + ' <button class="btn btn-sm" data-add-kind="' + kind + '">+ Add Item</button></h3>' +
         '<table class="ing-table"><thead><tr><th style="width:36%">Name</th><th>Stock</th><th>Unit</th><th>Cost / unit ($)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
     }).join("") +
+    '<h2 class="display" style="font-size:20px; margin:28px 0 6px;">Ingredient Catalogue</h2>' +
+    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">The built-in hops/malts/yeast that show up in every recipe\u2019s dropdowns, sorted with your region (' + escapeHtml(state.region) + ') first \u2014 change that in the sidebar. \u201cTrack Stock\u201d adds it to the stock list above; \u201cOverride Locally\u201d copies it into your Custom list below so you can edit or replace its numbers. There\u2019s no live hops/malt database this pulls from \u2014 see REFRESH_CATALOGUE.md in the repo for how to refresh this list periodically.</p>' +
+    catalogueCardHtml("fermentables", "Fermentables") +
+    catalogueCardHtml("hops", "Hops") +
+    catalogueCardHtml("yeast", "Yeast") +
     '<h2 class="display" style="font-size:20px; margin:28px 0 6px;">Ingredient Library</h2>' +
-    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">Custom ingredients you\u2019ve saved (via "Save Item" on a recipe, or added here) \u2014 these show up in the Fermentables/Hops/Yeast dropdowns on every recipe.</p>' +
+    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">Custom ingredients you\u2019ve saved (via "Save Item" on a recipe, "Override Locally" above, or added here) \u2014 these show up in the Fermentables/Hops/Yeast dropdowns on every recipe, replacing the catalogue entry of the same name. The \u21ba button on an override resets it back to the catalogue default.</p>' +
     customLibraryCardHtml("fermentables", "Custom Fermentables", customFermentableRowHtml) +
     customLibraryCardHtml("hops", "Custom Hops", customHopRowHtml) +
     customLibraryCardHtml("yeast", "Custom Yeast", customYeastRowHtml);
+
+  main.querySelectorAll("[data-cat-track]").forEach(btn => btn.addEventListener("click", () => {
+    const row = btn.closest("[data-cat-kind]"); const kind = row.dataset.catKind, name = row.dataset.catName;
+    const catItem = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind].find(x => x.name === name);
+    if (!catItem) return;
+    const inv = newInventoryItem(kind); inv.name = catItem.name;
+    state.inventory[kind].push(inv); saveToStorage(); renderMain(); toast("Tracking " + catItem.name + " in inventory");
+  }));
+  main.querySelectorAll("[data-cat-override]").forEach(btn => btn.addEventListener("click", () => {
+    const row = btn.closest("[data-cat-kind]"); const kind = row.dataset.catKind, name = row.dataset.catName;
+    const catItem = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind].find(x => x.name === name);
+    if (!catItem) return;
+    state.customIngredients[kind].push(JSON.parse(JSON.stringify(catItem)));
+    saveToStorage(); renderMain(); toast("Added an editable local copy of " + catItem.name);
+  }));
 
   main.querySelectorAll("[data-add-kind]").forEach(btn => btn.addEventListener("click", () => { state.inventory[btn.dataset.addKind].push(newInventoryItem(btn.dataset.addKind)); saveToStorage(); renderMain(); }));
   main.querySelectorAll("[data-ifield]").forEach(el => el.addEventListener("input", () => {
@@ -1356,7 +1420,8 @@ function renderInventoryMain(main) {
   }));
   main.querySelectorAll("[data-clfield]").forEach(el => el.addEventListener("input", () => {
     const row = el.closest("[data-ckind]"); const kind = row.dataset.ckind, idx = Number(row.dataset.idx);
-    const val = el.type === "number" ? Number(el.value) : el.value;
+    let val = el.type === "number" ? Number(el.value) : el.value;
+    if (el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
     const item = state.customIngredients[kind][idx];
     if (el.dataset.clfield === "attenuationPct") item.attenuation = val / 100;
     else item[el.dataset.clfield] = val;
@@ -1370,10 +1435,34 @@ function renderInventoryMain(main) {
   }));
 }
 
+function catalogueCardHtml(kind, label) {
+  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
+  const order = [state.region].concat(REGIONS.filter(x => x !== state.region));
+  const sorted = catalogue.slice().sort((a, b) => order.indexOf(a.origin || "Other") - order.indexOf(b.origin || "Other"));
+  const trackedNames = new Set(state.inventory[kind].map(i => i.name.toLowerCase()));
+  const overriddenNames = new Set(state.customIngredients[kind].map(i => i.name.toLowerCase()));
+  const rows = sorted.map(item => {
+    const spec = kind === "fermentables" ? item.ppg.toFixed(0) + " PPG / " + uVal(item.srm, "color-srm").toFixed(1) + " " + uLabel("color-srm")
+      : kind === "hops" ? item.alpha.toFixed(1) + "% AA"
+      : Math.round(item.attenuation * 100) + "% attenuation";
+    const tracked = trackedNames.has(item.name.toLowerCase());
+    const overridden = overriddenNames.has(item.name.toLowerCase());
+    return '<tr data-cat-kind="' + kind + '" data-cat-name="' + escapeHtml(item.name) + '">' +
+      '<td>' + escapeHtml(item.name) + '</td>' +
+      '<td style="color:var(--ink-faint);">' + escapeHtml(item.origin || "\u2014") + '</td>' +
+      '<td style="color:var(--ink-faint);">' + spec + '</td>' +
+      '<td class="row-actions">' +
+      '<button class="btn btn-sm" data-cat-track ' + (tracked ? "disabled" : "") + '>' + (tracked ? "Tracked \u2713" : "+ Track Stock") + '</button> ' +
+      '<button class="btn btn-sm" data-cat-override ' + (overridden ? "disabled" : "") + '>' + (overridden ? "Editing below \u2193" : "Override Locally") + '</button>' +
+      '</td></tr>';
+  }).join("");
+  return '<div class="card"><h3>' + label + '</h3>' +
+    '<table class="ing-table"><thead><tr><th style="width:26%">Name</th><th>Region</th><th>Spec</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
 function customLibraryCardHtml(kind, label, rowFn) {
   const items = state.customIngredients[kind];
   const rows = items.length ? items.map((item, i) => rowFn(item, i)).join("") : null;
-  const headers = kind === "fermentables" ? "<th style='width:28%'>Name</th><th>Type</th><th>PPG</th><th>Colour (SRM)</th><th></th>"
+  const headers = kind === "fermentables" ? "<th style='width:28%'>Name</th><th>Type</th><th>PPG</th><th>Colour (" + uLabel("color-srm") + ")</th><th></th>"
     : kind === "hops" ? "<th style='width:40%'>Name</th><th>Alpha %</th><th></th>"
     : "<th style='width:34%'>Name</th><th>Type</th><th>Attenuation %</th><th></th>";
   return '<div class="card"><h3>' + label + ' <button class="btn btn-sm" data-add-custom="' + kind + '">+ Add Custom ' + (kind === "fermentables" ? "Fermentable" : kind === "hops" ? "Hop" : "Yeast") + '</button></h3>' +
@@ -1381,26 +1470,35 @@ function customLibraryCardHtml(kind, label, rowFn) {
     (rows || '<tr class="empty-row"><td colspan="5">None saved yet</td></tr>') +
     '</tbody></table></div>';
 }
+function isOverride(kind, name) {
+  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
+  return catalogue.some(x => x.name.toLowerCase() === String(name).toLowerCase());
+}
+function delCustomBtnHtml(kind, name) {
+  return isOverride(kind, name)
+    ? '<button class="del-btn" data-del-custom title="Reset to catalogue default">\u21ba</button>'
+    : '<button class="del-btn" data-del-custom title="Delete">\u2715</button>';
+}
 function customFermentableRowHtml(item, i) {
   return '<tr data-ckind="fermentables" data-idx="' + i + '">' +
     '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
     '<td><select data-clfield="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
     '<td><input type="number" step="0.5" data-clfield="ppg" value="' + item.ppg + '"/></td>' +
-    '<td><input type="number" step="0.5" data-clfield="srm" value="' + item.srm + '"/></td>' +
-    '<td><button class="del-btn" data-del-custom>\u2715</button></td></tr>';
+    '<td><input type="number" step="0.1" data-clfield="srm" data-unitkind="color-srm" value="' + uVal(item.srm, "color-srm") + '"/></td>' +
+    '<td>' + delCustomBtnHtml("fermentables", item.name) + '</td></tr>';
 }
 function customHopRowHtml(item, i) {
   return '<tr data-ckind="hops" data-idx="' + i + '">' +
     '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
     '<td><input type="number" step="0.1" data-clfield="alpha" value="' + item.alpha + '"/></td>' +
-    '<td><button class="del-btn" data-del-custom>\u2715</button></td></tr>';
+    '<td>' + delCustomBtnHtml("hops", item.name) + '</td></tr>';
 }
 function customYeastRowHtml(item, i) {
   return '<tr data-ckind="yeast" data-idx="' + i + '">' +
     '<td><input data-clfield="name" value="' + escapeHtml(item.name) + '"/></td>' +
     '<td><select data-clfield="type">' + ["Ale", "Lager", "Ale Dry"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
     '<td><input type="number" step="1" data-clfield="attenuationPct" value="' + (item.attenuation * 100).toFixed(0) + '"/></td>' +
-    '<td><button class="del-btn" data-del-custom>\u2715</button></td></tr>';
+    '<td>' + delCustomBtnHtml("yeast", item.name) + '</td></tr>';
 }
 
 // ================= EQUIPMENT =================
@@ -1489,12 +1587,14 @@ function init() {
   if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
   if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
   if (!state.unitSystem) state.unitSystem = "metric";
+  if (!state.region) state.region = "New Zealand";
   state.recipes.forEach(migrateRecipe);
   state.equipment.forEach(e => { if (e.tempAdjustF == null) e.tempAdjustF = 2; });
   Tree.pruneOrphans(state.tree, new Set(state.recipes.map(r => r.id)));
   saveToStorage();
   renderAll();
   updateUnitToggleLabel();
+  renderRegionSelect();
   renderFileWorkspaceControls();
   checkIncomingShare();
 
@@ -1503,6 +1603,7 @@ function init() {
   document.getElementById("exportAllBtn").addEventListener("click", exportAll);
   document.getElementById("importInput").addEventListener("change", e => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ""; });
   document.getElementById("unitToggleBtn").addEventListener("click", () => { state.unitSystem = state.unitSystem === "metric" ? "us" : "metric"; saveToStorage(); updateUnitToggleLabel(); renderAll(); });
+  document.getElementById("regionSelect").addEventListener("change", e => { state.region = e.target.value; saveToStorage(); renderAll(); });
 
   // Mobile hamburger drawer
   const sidebarToggle = document.getElementById("sidebarToggle");
@@ -1515,6 +1616,10 @@ function init() {
   });
 }
 function updateUnitToggleLabel() { document.getElementById("unitToggleBtn").textContent = state.unitSystem === "metric" ? "Units: Metric" : "Units: Imperial"; }
+function renderRegionSelect() {
+  const el = document.getElementById("regionSelect");
+  el.innerHTML = REGIONS.map(reg => '<option value="' + escapeHtml(reg) + '" ' + (state.region === reg ? "selected" : "") + '>' + escapeHtml(reg) + ' hops/malts/yeast first</option>').join("");
+}
 
 // ---- Working file (File System Access API) ----
 function renderFileWorkspaceControls() {
