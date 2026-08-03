@@ -11,7 +11,7 @@ let state = {
   customIngredients: { fermentables: [], hops: [], yeast: [] },
   unitSystem: "metric", // NZ default. "us" is the alternative.
   region: "New Zealand", // which country's hops/malts/yeast show first in the ingredient pickers
-  inventoryRegionFilter: ["New Zealand", "Australia"], // regions shown on the Inventory tab; [] = All Regions
+  inventoryRegionFilter: ["New Zealand", "Australia", "Custom"], // regions shown on the Inventory tab; [] = All Regions
   activeSection: "recipes", // recipes | batches | inventory | equipment | tools
   activeId: null,
   activeTab: "design",
@@ -26,11 +26,11 @@ function nzDate(iso) { if (!iso) return ""; const d = new Date(iso); return isNa
 function regionGroupedOptions(library, currentName, known) {
   const groups = new Map();
   library.forEach(x => {
-    const g = x.origin || "Other";
+    const g = x.origin || "Custom";
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(x);
   });
-  const order = [state.region].concat(REGIONS.filter(r => r !== state.region)).concat(["Other"]);
+  const order = [state.region].concat(REGIONS.filter(r => r !== state.region)).concat(["Custom"]);
   let html = "";
   order.forEach(g => {
     const items = groups.get(g);
@@ -94,7 +94,7 @@ function addRegionToInventory(kind, region) {
   const existing = new Set(state.inventory[kind].map(i => i.name.toLowerCase()));
   let added = 0;
   catalogue.forEach(item => {
-    if (region !== "__all__" && (item.origin || "Other") !== region) return;
+    if (region !== "__all__" && (item.origin || "Custom") !== region) return;
     if (existing.has(item.name.toLowerCase())) return;
     const row = Object.assign(newInventoryItem(kind), JSON.parse(JSON.stringify(item)));
     state.inventory[kind].push(row);
@@ -126,9 +126,24 @@ function migrateInventoryModel() {
   delete state.customIngredients;
   state.inventoryModelV2 = true;
 }
+// Bugfix (separate from the migration above, which may have already run for people on the
+// previous release): items with no real origin used to be stored with origin "" and had
+// nowhere to go once a region filter existed, so they silently vanished from view. Backfill
+// them to the "Custom" pseudo-region and make sure "Custom" is in anyone's already-saved
+// filter, so nothing that used to be visible stays hidden.
+function fixCustomRegionVisibility() {
+  if (state.customRegionFixV1) return;
+  ["fermentables", "hops", "yeast"].forEach(kind => {
+    (state.inventory[kind] || []).forEach(item => { if (!item.origin) item.origin = "Custom"; });
+  });
+  if (Array.isArray(state.inventoryRegionFilter) && state.inventoryRegionFilter.length && !state.inventoryRegionFilter.includes("Custom")) {
+    state.inventoryRegionFilter.push("Custom");
+  }
+  state.customRegionFixV1 = true;
+}
 function newInventoryItem(kind) {
   const stockDefaults = { fermentables: "kg", hops: "g", yeast: "pkg", misc: "g" };
-  const base = { id: uid(), name: "", stock: 0, unit: stockDefaults[kind] || "unit", cost: 0, origin: "" };
+  const base = { id: uid(), name: "", stock: 0, unit: stockDefaults[kind] || "unit", cost: 0, origin: "Custom" };
   if (kind === "fermentables") return Object.assign(base, { type: "Grain", ppg: 37, srm: 4, mashable: true });
   if (kind === "hops") return Object.assign(base, { alpha: 8 });
   if (kind === "yeast") return Object.assign(base, { type: "Ale", attenuation: 0.75 });
@@ -419,8 +434,9 @@ function promptImportBackup(parsed) {
         if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
         if (!state.unitSystem) state.unitSystem = "metric";
         if (!state.region) state.region = "New Zealand";
-        if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia"];
+        if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia", "Custom"];
         migrateInventoryModel();
+        fixCustomRegionVisibility();
         saveToStorage(); closeModal(); renderAll();
         toast("Backup restored");
       });
@@ -1451,7 +1467,7 @@ function inventoryCardHtml(kind, label) {
   const isCatalogueKind = CATALOGUE_KINDS.includes(kind);
   const filterActive = isCatalogueKind && state.inventoryRegionFilter.length > 0;
   const indexed = state.inventory[kind].map((item, i) => [item, i]);
-  const visible = filterActive ? indexed.filter(pair => state.inventoryRegionFilter.includes(pair[0].origin)) : indexed;
+  const visible = filterActive ? indexed.filter(pair => state.inventoryRegionFilter.includes(pair[0].origin || "Custom")) : indexed;
   const specHeaders = kind === "fermentables" ? "<th>Type</th><th>PPG</th><th>Colour (" + uLabel("color-srm") + ")</th>"
     : kind === "hops" ? "<th>Alpha %</th>"
     : kind === "yeast" ? "<th>Type</th><th>Attenuation %</th>"
@@ -1485,7 +1501,7 @@ function inventoryRowHtml(kind, item, i) {
     specCells = '<td><select data-ifield="type">' + ["Ale", "Lager", "Ale Dry"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
       '<td><input type="number" step="1" data-ifield="attenuationPct" value="' + (item.attenuation * 100).toFixed(0) + '"/></td>';
   }
-  const originCell = CATALOGUE_KINDS.includes(kind) ? '<td style="color:var(--ink-faint);">' + escapeHtml(item.origin || "\u2014") + '</td>' : "";
+  const originCell = CATALOGUE_KINDS.includes(kind) ? '<td style="color:var(--ink-faint);">' + escapeHtml(item.origin || "Custom") + '</td>' : "";
   return '<tr data-kind="' + kind + '" data-idx="' + i + '">' +
     '<td><input data-ifield="name" value="' + escapeHtml(item.name) + '"/></td>' +
     originCell + specCells +
@@ -1582,9 +1598,10 @@ function init() {
   if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
   if (!state.unitSystem) state.unitSystem = "metric";
   if (!state.region) state.region = "New Zealand";
-  if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia"];
+  if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia", "Custom"];
   state.recipes.forEach(migrateRecipe);
   migrateInventoryModel();
+  fixCustomRegionVisibility();
   state.equipment.forEach(e => { if (e.tempAdjustF == null) e.tempAdjustF = 2; });
   Tree.pruneOrphans(state.tree, new Set(state.recipes.map(r => r.id)));
   saveToStorage();
@@ -1661,8 +1678,9 @@ async function handleOpenWorkingFile() {
     if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
     if (!state.unitSystem) state.unitSystem = "metric";
     if (!state.region) state.region = "New Zealand";
-    if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia"];
+    if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia", "Custom"];
     migrateInventoryModel();
+    fixCustomRegionVisibility();
     saveToStorage(); renderAll(); renderFileWorkspaceControls(); updateUnitToggleLabel();
     toast("Opened " + FileWorkspace.linkedName);
   } catch (e) {

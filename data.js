@@ -124,7 +124,12 @@ const YEASTS = [
 
 // All the recognised origin/region values above, in a sensible display order (used to build
 // grouped <optgroup> ingredient pickers - see buildIngredientSelect in app.js).
-const REGIONS = ["New Zealand", "Australia", "USA", "UK", "Germany", "Czech Republic", "Slovenia", "Belgium", "Generic"];
+// "Custom" isn't a real country - it's the bucket for ingredients you've typed in yourself
+// (via + Add Item, or a brand-new name in a recipe dropdown) that don't match anything in the
+// built-in catalogue, so they don't have a real origin. It must stay in this list and in the
+// default inventory filter, or custom ingredients silently disappear whenever a region filter
+// is active.
+const REGIONS = ["New Zealand", "Australia", "USA", "UK", "Germany", "Czech Republic", "Slovenia", "Belgium", "Generic", "Custom"];
 
 // Simplified BJCP-style guideline ranges: [OG lo/hi, FG lo/hi, IBU lo/hi, SRM lo/hi, ABV lo/hi]
 const STYLES = [
