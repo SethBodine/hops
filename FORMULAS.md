@@ -19,8 +19,9 @@ OG = 1 + (sum of gravity points ÷ batch volume in gallons) ÷ 1000
 ```
 
 - **PPG** ("points per pound per gallon") is how much gravity one pound of that fermentable
-  contributes to one gallon of wort at 100% efficiency. It's stored per-ingredient (see
-  `data.js` → `FERMENTABLES`, or entered directly for a custom ingredient).
+  contributes to one gallon of wort at 100% efficiency. It's stored per-ingredient in your
+  **Inventory** (Fermentables) — seeded from the built-in catalogue in `data.js`, but editable
+  or fully custom per ingredient, since that's what feeds every recipe's fermentable dropdown.
 - **Mash efficiency** only applies to mashable ingredients (grains/adjuncts). Sugars and
   extracts are assumed 100% efficient — they don't need to be extracted from a mash.
 - Source: standard homebrew gravity-point arithmetic used by BeerSmith, Brewfather, and
@@ -36,6 +37,19 @@ Yeast attenuation (stored as a decimal, e.g. 0.75 for 75%) is how much of the av
 sugar the yeast strain typically converts to alcohol/CO₂. Stored per-recipe on the yeast
 object so custom/imported strains work without a lookup table.
 
+**Target Final Gravity (solving backwards)**: FG isn't pulled from a style automatically —
+typing a value into the recipe's Target Final Gravity field (or clicking Match Style, which
+fills in the midpoint of the selected style's FG range) runs the FG formula above in
+reverse, solving for the attenuation that would produce that FG at the recipe's current OG:
+
+```
+attenuation = 1 - ((target FG - 1) × 1000) ÷ ((OG - 1) × 1000)
+```
+
+The recipe's yeast Attenuation field is then set to that value (clamped to 0–100%; a target
+outside what's physically reachable from the current OG is capped at the nearer bound, with
+a note explaining why, rather than silently producing a nonsense attenuation).
+
 ## Alcohol by Volume (ABV)
 
 ```
@@ -45,18 +59,40 @@ ABV% = (76.08 × (OG - FG) / (1.775 - OG)) × (FG / 0.794)
 Standard homebrew ABV formula. Reasonably accurate across normal beer gravity ranges
 (roughly 1.030–1.130 OG); it's the same formula used by most homebrew ABV calculators.
 
-## Bitterness (IBU) — Tinseth method
+## Bitterness (IBU) — Tinseth method, with a whirlpool/hop-stand adjustment
 
 ```
 utilisation = bignessFactor × boilTimeFactor
 bignessFactor = 1.65 × 0.000125^(OG - 1)
-boilTimeFactor = (1 - e^(-0.04 × boil time in minutes)) / 4.15
+boilTimeFactor = (1 - e^(-0.04 × boil/stand time in minutes)) / 4.15
 alpha acid concentration (mg/L) = (hop weight in grams × alpha acid % ÷ 100 × 1000) ÷ wort volume in litres
-IBU (per addition) = alpha acid concentration × utilisation
+IBU (Boil addition) = alpha acid concentration × utilisation
+IBU (Whirlpool addition) = alpha acid concentration × utilisation × whirlpoolUtilizationFactor(stand temp)
+IBU (Dry Hop addition) = 0
 ```
 
-Only additions marked **Boil** are counted — whirlpool and dry-hop additions contribute
-variable, hard-to-model IBU and are conventionally excluded from Tinseth-style estimates.
+**Boil** additions use the standard Tinseth curve unmodified. **Dry hop** additions get no
+heat at all, so isomerization doesn't happen — they're the one use that stays at 0 IBU.
+**Whirlpool/hop-stand** additions are calculated the same way (using the stand time as the
+"boil time" input above), then scaled down by a temperature factor, since isomerization
+continues — just more slowly — below boiling as the wort cools:
+
+```
+whirlpoolUtilizationFactor(stand temp in °F):
+  tempC = (tempF - 32) × 5/9
+  if tempC ≥ 100: factor = 1
+  if tempC < 50:  factor = 0
+  else: factor = e^(-9756.6 × (1/(tempC+273.15) - 1/373.15))
+```
+
+This is an Arrhenius-style exponential falloff, fitted against published whirlpool
+utilisation figures (Grainfather Brewing, citing Hieronymus/Raspuzzi/Hosom): 90°C → 49%,
+80°C → 23%, 70°C → 10%, 60°C → 4.3%, 50°C → 1.75% of full-boil utilisation. Below ~50°C the
+contribution is negligible on homebrew timescales, so it's floored at 0. Each hop addition
+has its own **Stand Temp** field (default 194°F/90°C, a typical flameout/whirlpool
+temperature) — since that temperature is the single biggest factor in how much IBU a
+whirlpool addition actually contributes, it's worth setting to what your system actually
+does rather than leaving it at the default.
 
 ⚠️ **This is the one formula that had a real bug during development**: the concentration
 term needs wort volume in **litres**, not gallons. Using gallons directly overstated IBU by
@@ -75,6 +111,18 @@ contribution isn't linear with grain colour at the high end (a 500°L grain does
 beer 10× darker than a 50°L grain in the same quantity). °Lovibond and SRM are treated as
 numerically equivalent here, matching how BeerXML's `<COLOR>` field is commonly interpreted
 by other tools — a reasonable approximation at typical homebrew colour ranges.
+
+**Display units — SRM vs EBC**: internal/canonical storage is always SRM, matching the
+formula above and BeerXML's convention. When the interface is set to metric units, colour
+is *displayed* (and entered) in EBC instead, converted with:
+
+```
+EBC = SRM × 1.97
+SRM = EBC ÷ 1.97
+```
+
+a standard fixed-ratio approximation. This conversion is purely for display/input — the
+Morey equation itself always runs in SRM.
 
 ## Water Chemistry
 
@@ -224,18 +272,21 @@ Two small "how much did each ingredient contribute" breakdowns, both straightfor
 
 ```
 % of grist (per fermentable) = that fermentable's weight ÷ total fermentable weight × 100
-IBU (per hop addition) = that addition's individual Tinseth contribution (see Bitterness above) — the total IBU is just the sum across all Boil additions
+IBU (per hop addition) = that addition's individual Tinseth contribution (see Bitterness above) — the total IBU is the sum across all additions (Boil, Whirlpool, and Dry Hop, the last of which is always 0)
 ```
 
 ---
 
 ## Known simplifications (documented, not hidden)
 
-- IBU: only **Boil** additions count toward the IBU total. Whirlpool/hopstand and dry-hop
-  contributions are real but require assumptions (whirlpool temperature/duration curves)
-  that vary a lot between brewers and aren't modelled.
-- Colour: °Lovibond and SRM are treated as equal. This is a common simplification, most
-  accurate for pale/crystal malts and least accurate for very dark roasted grains.
+- IBU: whirlpool/hop-stand additions are modelled (see Bitterness above), but via a fitted
+  temperature-falloff curve driven by a single per-addition Stand Temp value, not an actual
+  cooling-curve simulation of your kettle. Dry hop additions still contribute 0 IBU (no
+  heat, no isomerization) — that part is standard, not a simplification.
+- Colour: °Lovibond and SRM are treated as equal, and EBC is a fixed-ratio (×1.97) display
+  conversion of SRM, not an independently-modelled colour space. Both are common
+  simplifications, most accurate for pale/crystal malts and least accurate for very dark
+  roasted grains.
 - Water: only 6 ions are tracked (Ca, Mg, Na, SO4, Cl, HCO3) and only 6 common salts are
   modelled. pH is not calculated — residual alkalinity is used as a proxy, as is standard
   in most free/open homebrew water calculators.
