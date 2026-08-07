@@ -132,21 +132,78 @@ const YEASTS = [
 const REGIONS = ["New Zealand", "Australia", "USA", "UK", "Germany", "Czech Republic", "Slovenia", "Belgium", "Generic", "Custom"];
 
 // Simplified BJCP-style guideline ranges: [OG lo/hi, FG lo/hi, IBU lo/hi, SRM lo/hi, ABV lo/hi]
+// Approximate guideline midpoints/ranges, not verbatim BJCP text - intended as a practical
+// target to design against and compare a finished recipe to, not a competition scoresheet.
 const STYLES = [
+  // Lagers
   { name: "American Light Lager", og: [1.028, 1.040], fg: [0.998, 1.008], ibu: [8, 12], srm: [2, 3], abv: [2.8, 4.2] },
-  { name: "American Pale Ale", og: [1.045, 1.060], fg: [1.010, 1.015], ibu: [30, 50], srm: [5, 10], abv: [4.5, 6.2] },
-  { name: "American IPA", og: [1.056, 1.070], fg: [1.008, 1.014], ibu: [40, 70], srm: [6, 14], abv: [5.5, 7.5] },
-  { name: "English Bitter (Ordinary)", og: [1.030, 1.039], fg: [1.007, 1.011], ibu: [25, 35], srm: [8, 14], abv: [3.2, 3.8] },
-  { name: "Strong Bitter (ESB)", og: [1.048, 1.060], fg: [1.010, 1.016], ibu: [30, 50], srm: [8, 18], abv: [4.6, 6.2] },
-  { name: "Dry Irish Stout", og: [1.036, 1.044], fg: [1.007, 1.011], ibu: [25, 45], srm: [25, 40], abv: [4.0, 4.5] },
-  { name: "Foreign Extra Stout", og: [1.056, 1.075], fg: [1.010, 1.018], ibu: [30, 70], srm: [30, 40], abv: [5.5, 8.0] },
-  { name: "Robust Porter", og: [1.048, 1.065], fg: [1.012, 1.016], ibu: [25, 50], srm: [22, 35], abv: [4.8, 6.5] },
-  { name: "German Pilsner", og: [1.044, 1.050], fg: [1.008, 1.013], ibu: [22, 40], srm: [2, 5], abv: [4.4, 5.2] },
+  { name: "American Lager", og: [1.040, 1.050], fg: [1.004, 1.010], ibu: [8, 15], srm: [2, 4], abv: [4.2, 5.3] },
+  { name: "American Amber Lager", og: [1.045, 1.060], fg: [1.010, 1.018], ibu: [18, 30], srm: [7, 14], abv: [4.5, 5.9] },
+  { name: "International Pale Lager", og: [1.042, 1.050], fg: [1.008, 1.012], ibu: [18, 25], srm: [2, 6], abv: [4.5, 6.0] },
+  { name: "Munich Helles", og: [1.044, 1.048], fg: [1.006, 1.012], ibu: [16, 22], srm: [3, 5], abv: [4.7, 5.4] },
+  { name: "Festbier", og: [1.050, 1.057], fg: [1.012, 1.016], ibu: [18, 25], srm: [4, 7], abv: [5.3, 6.3] },
   { name: "Vienna Lager", og: [1.046, 1.052], fg: [1.010, 1.014], ibu: [18, 30], srm: [9, 15], abv: [4.5, 5.5] },
-  { name: "Belgian Saison", og: [1.048, 1.065], fg: [1.002, 1.012], ibu: [20, 35], srm: [5, 14], abv: [5.0, 7.0] },
+  { name: "M\u00e4rzen (Oktoberfest)", og: [1.054, 1.060], fg: [1.010, 1.016], ibu: [18, 24], srm: [8, 17], abv: [5.6, 6.3] },
+  { name: "German Pilsner", og: [1.044, 1.050], fg: [1.008, 1.013], ibu: [22, 40], srm: [2, 5], abv: [4.4, 5.2] },
+  { name: "Bohemian Pilsner", og: [1.044, 1.056], fg: [1.013, 1.017], ibu: [30, 45], srm: [3, 6], abv: [4.2, 5.8] },
+  { name: "Dortmunder Export", og: [1.048, 1.056], fg: [1.010, 1.015], ibu: [23, 30], srm: [3, 6], abv: [4.8, 6.0] },
+  { name: "Schwarzbier", og: [1.046, 1.052], fg: [1.010, 1.016], ibu: [20, 30], srm: [17, 30], abv: [4.4, 5.4] },
+  { name: "Munich Dunkel", og: [1.048, 1.056], fg: [1.010, 1.016], ibu: [18, 28], srm: [14, 28], abv: [4.5, 5.6] },
+  { name: "Doppelbock", og: [1.072, 1.112], fg: [1.016, 1.024], ibu: [16, 26], srm: [6, 25], abv: [7.0, 10.0] },
+  { name: "Maibock / Helles Bock", og: [1.064, 1.072], fg: [1.011, 1.018], ibu: [23, 35], srm: [6, 11], abv: [6.3, 7.4] },
+  // British ales
+  { name: "English Bitter (Ordinary)", og: [1.030, 1.039], fg: [1.007, 1.011], ibu: [25, 35], srm: [8, 14], abv: [3.2, 3.8] },
+  { name: "Best Bitter", og: [1.040, 1.048], fg: [1.008, 1.012], ibu: [25, 40], srm: [8, 16], abv: [3.8, 4.6] },
+  { name: "Strong Bitter (ESB)", og: [1.048, 1.060], fg: [1.010, 1.016], ibu: [30, 50], srm: [8, 18], abv: [4.6, 6.2] },
+  { name: "British Golden Ale", og: [1.038, 1.053], fg: [1.006, 1.012], ibu: [20, 45], srm: [2, 6], abv: [3.8, 5.0] },
+  { name: "Mild", og: [1.030, 1.038], fg: [1.008, 1.013], ibu: [10, 25], srm: [12, 25], abv: [2.8, 4.5] },
+  { name: "English Brown Ale", og: [1.033, 1.042], fg: [1.011, 1.018], ibu: [12, 20], srm: [12, 22], abv: [2.8, 4.1] },
+  { name: "Scottish Ale (60/-\u201380/-)", og: [1.030, 1.040], fg: [1.010, 1.015], ibu: [10, 20], srm: [9, 17], abv: [2.5, 3.9] },
+  { name: "Wee Heavy (Scotch Ale)", og: [1.070, 1.130], fg: [1.018, 1.056], ibu: [17, 35], srm: [14, 25], abv: [6.5, 10.0] },
+  { name: "Irish Red Ale", og: [1.036, 1.046], fg: [1.010, 1.014], ibu: [18, 28], srm: [9, 14], abv: [3.8, 5.0] },
+  { name: "Dry Irish Stout", og: [1.036, 1.044], fg: [1.007, 1.011], ibu: [25, 45], srm: [25, 40], abv: [4.0, 4.5] },
+  // American ales / IPAs
+  { name: "American Pale Ale", og: [1.045, 1.060], fg: [1.010, 1.015], ibu: [30, 50], srm: [5, 10], abv: [4.5, 6.2] },
+  { name: "American Amber Ale", og: [1.045, 1.060], fg: [1.010, 1.015], ibu: [25, 40], srm: [10, 17], abv: [4.5, 6.2] },
+  { name: "American Brown Ale", og: [1.045, 1.060], fg: [1.010, 1.016], ibu: [20, 30], srm: [18, 35], abv: [4.3, 6.2] },
+  { name: "American Wheat Beer", og: [1.040, 1.055], fg: [1.008, 1.013], ibu: [15, 30], srm: [3, 6], abv: [4.0, 5.5] },
+  { name: "Cream Ale", og: [1.042, 1.055], fg: [1.006, 1.012], ibu: [8, 20], srm: [2, 5], abv: [4.2, 5.6] },
+  { name: "California Common (Steam Beer)", og: [1.048, 1.054], fg: [1.011, 1.014], ibu: [30, 45], srm: [8, 17], abv: [4.5, 5.5] },
+  { name: "English IPA", og: [1.050, 1.075], fg: [1.010, 1.018], ibu: [40, 60], srm: [6, 14], abv: [5.0, 7.5] },
+  { name: "American IPA", og: [1.056, 1.070], fg: [1.008, 1.014], ibu: [40, 70], srm: [6, 14], abv: [5.5, 7.5] },
+  { name: "New England IPA (Hazy)", og: [1.060, 1.072], fg: [1.010, 1.015], ibu: [25, 60], srm: [3, 7], abv: [6.0, 9.0] },
+  { name: "Session IPA", og: [1.038, 1.048], fg: [1.006, 1.012], ibu: [30, 55], srm: [3, 7], abv: [3.5, 5.0] },
+  { name: "Double IPA", og: [1.065, 1.085], fg: [1.008, 1.018], ibu: [60, 100], srm: [4, 15], abv: [7.5, 10.0] },
+  { name: "Black IPA", og: [1.056, 1.075], fg: [1.010, 1.018], ibu: [50, 90], srm: [25, 40], abv: [6.0, 7.5] },
+  // German wheat / sour
   { name: "Weissbier (Hefeweizen)", og: [1.044, 1.052], fg: [1.010, 1.014], ibu: [8, 15], srm: [2, 6], abv: [4.3, 5.6] },
+  { name: "Dunkelweizen", og: [1.044, 1.056], fg: [1.010, 1.014], ibu: [10, 18], srm: [14, 23], abv: [4.3, 5.6] },
+  { name: "Weizenbock", og: [1.064, 1.090], fg: [1.015, 1.022], ibu: [15, 30], srm: [12, 25], abv: [6.5, 9.0] },
+  { name: "Berliner Weisse", og: [1.028, 1.032], fg: [1.003, 1.006], ibu: [3, 8], srm: [2, 3], abv: [2.8, 3.8] },
+  { name: "Gose", og: [1.036, 1.056], fg: [1.006, 1.010], ibu: [5, 12], srm: [3, 4], abv: [4.2, 4.8] },
+  // Belgian / French
+  { name: "Witbier", og: [1.044, 1.052], fg: [1.008, 1.012], ibu: [8, 20], srm: [2, 4], abv: [4.5, 5.5] },
+  { name: "Belgian Pale Ale", og: [1.048, 1.054], fg: [1.010, 1.014], ibu: [20, 30], srm: [8, 14], abv: [4.8, 5.5] },
+  { name: "Belgian Saison", og: [1.048, 1.065], fg: [1.002, 1.012], ibu: [20, 35], srm: [5, 14], abv: [5.0, 7.0] },
+  { name: "Belgian Blond Ale", og: [1.062, 1.075], fg: [1.008, 1.018], ibu: [15, 30], srm: [4, 7], abv: [6.0, 7.5] },
+  { name: "Belgian Dubbel", og: [1.062, 1.075], fg: [1.008, 1.018], ibu: [15, 25], srm: [10, 17], abv: [6.0, 7.6] },
+  { name: "Belgian Tripel", og: [1.075, 1.085], fg: [1.008, 1.014], ibu: [20, 40], srm: [4.5, 7], abv: [7.5, 9.5] },
+  { name: "Belgian Golden Strong Ale", og: [1.070, 1.095], fg: [1.005, 1.016], ibu: [22, 35], srm: [3, 6], abv: [7.5, 10.5] },
+  { name: "Belgian Dark Strong Ale", og: [1.075, 1.110], fg: [1.010, 1.024], ibu: [20, 35], srm: [12, 22], abv: [8.0, 12.0] },
+  { name: "Bi\u00e8re de Garde", og: [1.060, 1.080], fg: [1.008, 1.016], ibu: [18, 28], srm: [6, 19], abv: [6.0, 8.5] },
+  // Porter / stout
+  { name: "Brown Porter", og: [1.040, 1.052], fg: [1.008, 1.014], ibu: [12, 20], srm: [20, 30], abv: [4.0, 5.4] },
+  { name: "Robust Porter", og: [1.048, 1.065], fg: [1.012, 1.016], ibu: [25, 50], srm: [22, 35], abv: [4.8, 6.5] },
+  { name: "Baltic Porter", og: [1.060, 1.090], fg: [1.016, 1.024], ibu: [20, 40], srm: [17, 30], abv: [6.5, 9.5] },
+  { name: "Sweet Stout (Milk Stout)", og: [1.044, 1.060], fg: [1.012, 1.024], ibu: [15, 25], srm: [30, 40], abv: [4.0, 6.0] },
+  { name: "Oatmeal Stout", og: [1.048, 1.065], fg: [1.010, 1.018], ibu: [25, 40], srm: [22, 40], abv: [4.2, 5.9] },
+  { name: "Foreign Extra Stout", og: [1.056, 1.075], fg: [1.010, 1.018], ibu: [30, 70], srm: [30, 40], abv: [5.5, 8.0] },
+  { name: "American Stout", og: [1.050, 1.075], fg: [1.010, 1.022], ibu: [35, 75], srm: [30, 40], abv: [5.0, 7.0] },
   { name: "Imperial Stout", og: [1.075, 1.115], fg: [1.018, 1.030], ibu: [50, 90], srm: [30, 40], abv: [8.0, 12.0] },
+  // Strong ale
   { name: "Barleywine", og: [1.090, 1.120], fg: [1.016, 1.030], ibu: [35, 70], srm: [10, 22], abv: [8.4, 12.2] },
+  { name: "American Barleywine", og: [1.080, 1.120], fg: [1.016, 1.030], ibu: [50, 100], srm: [10, 19], abv: [8.0, 12.0] },
+  { name: "Old Ale", og: [1.060, 1.090], fg: [1.015, 1.022], ibu: [30, 60], srm: [10, 22], abv: [6.0, 9.0] },
 ];
 
 // ppm contribution per gram of salt in 1 US gallon of water (standard homebrew water-chemistry constants)

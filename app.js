@@ -986,8 +986,9 @@ function designTabHtml(r, style) {
     '<div class="card"><h3>Yeast <span><button class="btn btn-sm" data-substitute="yeast">Substitute</button> <button class="btn btn-sm" data-save-item="yeast">Save Item</button></span></h3><div class="field-grid">' +
     '<div class="field"><label>Strain</label><select data-field="yeastName">' + buildIngredientSelect(yeastLibrary, r.yeast.name) + '</select></div>' +
     '<div class="field"><label>Attenuation (%)</label><input type="number" step="1" data-field="yeastAttenuation" value="' + (r.yeast.attenuation * 100).toFixed(0) + '"/></div>' +
+    '<div class="field"><label>Target Final Gravity' + (style ? ' <button class="btn btn-sm" data-action="matchStyleFg" title="Set to the middle of ' + escapeHtml(style.name) + '\u2019s FG range" style="padding:0 6px;">Match Style</button>' : "") + '</label><input type="number" step="0.001" data-field="targetFg" value="' + d.fg.toFixed(3) + '"/></div>' +
     '<div class="field"><label>Cost ($)</label><input type="number" step="0.01" data-field="yeastCost" value="' + (r.yeast.cost || 0) + '"/></div>' +
-    '</div></div>' +
+    '</div><p style="color:var(--ink-faint);font-size:12px;margin:6px 0 0;">Final gravity isn\u2019t pulled from the style automatically \u2014 it\u2019s calculated from Original Gravity and yeast Attenuation. Type a number into Target Final Gravity (or hit Match Style, once a style is picked above) and Attenuation is worked out backwards to hit it.</p></div>' +
     '<div class="card"><h3>Misc / Fining Agents <button class="btn btn-sm" data-action="addMisc">+ Add Item</button></h3>' +
     '<table class="ing-table"><thead><tr><th style="width:34%">Name</th><th>Amount</th><th>Unit</th><th>Use</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + miscRows + '</tbody></table></div>' +
     '<div class="card"><h3>Cost & Batch Stats</h3><div class="field-grid">' +
@@ -1001,6 +1002,21 @@ function designTabHtml(r, style) {
   );
 }
 
+// FG = 1 + (OG points) x (1 - attenuation), so attenuation = 1 - (FG points / OG points).
+// This is the inverse of Calc.estimateFG - given a target FG, work out the attenuation
+// that would produce it at the recipe's current OG, and set that as the yeast's attenuation.
+function applyTargetFg(r, targetFg) {
+  if (!targetFg || targetFg <= 1) return;
+  const d = computeDerived(r);
+  const ogPoints = (d.og - 1) * 1000;
+  if (ogPoints <= 0) return;
+  const fgPoints = (targetFg - 1) * 1000;
+  const attenuation = 1 - (fgPoints / ogPoints);
+  const clamped = Math.max(0, Math.min(1, attenuation));
+  r.yeast.attenuation = clamped;
+  if (attenuation > 1) toast("That FG is lower than 100% attenuation can reach from this OG \u2014 capped at 100%");
+  else if (attenuation < 0) toast("That FG is above the wort's OG \u2014 capped at 0% attenuation");
+}
 function styleCompareHtml(r, style) {
   const d = computeDerived(r);
   const rows = [
@@ -1196,6 +1212,15 @@ function wireTabEvents(r) {
   if (yeastAtt) yeastAtt.addEventListener("input", () => { r.yeast.attenuation = Number(yeastAtt.value) / 100; saveToStorage(); refreshComputed(r); });
   const yeastCost = panel.querySelector('[data-field="yeastCost"]');
   if (yeastCost) yeastCost.addEventListener("input", () => { r.yeast.cost = Number(yeastCost.value); saveToStorage(); refreshComputed(r); });
+  const targetFgInput = panel.querySelector('[data-field="targetFg"]');
+  if (targetFgInput) targetFgInput.addEventListener("input", () => { applyTargetFg(r, Number(targetFgInput.value)); saveToStorage(); renderMain(); });
+  const matchStyleFgBtn = panel.querySelector('[data-action="matchStyleFg"]');
+  if (matchStyleFgBtn) matchStyleFgBtn.addEventListener("click", () => {
+    const style = styleRef(r.styleName);
+    if (!style) return;
+    applyTargetFg(r, (style.fg[0] + style.fg[1]) / 2);
+    saveToStorage(); renderMain();
+  });
 
   const equipSel = panel.querySelector('[data-field="equipmentId"]');
   if (equipSel) equipSel.addEventListener("change", () => {
@@ -1420,14 +1445,17 @@ function handleNewBatch() { const r = state.recipes[0]; const b = newBatch(r.id)
 const INVENTORY_KINDS = [["fermentables", "Fermentables"], ["hops", "Hops"], ["yeast", "Yeast"], ["misc", "Misc / Fining"]];
 const CATALOGUE_KINDS = ["fermentables", "hops", "yeast"]; // kinds backed by data.js + region bulk-add
 function renderInventoryMain(main) {
-  const filterChips = '<button class="btn btn-sm" data-region-chip="__all__" style="' + (state.inventoryRegionFilter.length === 0 ? "font-weight:700;text-decoration:underline;" : "") + '">All Regions</button>' +
-    REGIONS.map(r => '<button class="btn btn-sm" data-region-chip="' + escapeHtml(r) + '" style="' + (state.inventoryRegionFilter.includes(r) ? "font-weight:700;text-decoration:underline;" : "") + '">' + escapeHtml(r) + '</button>').join("");
+  const allShown = state.inventoryRegionFilter.length === 0;
+  const filterChips = REGIONS.map(r => '<button class="btn btn-sm" data-region-chip="' + escapeHtml(r) + '" style="' + (state.inventoryRegionFilter.includes(r) ? "background:var(--amber);color:#fff;border-color:var(--amber);" : "") + '">' + escapeHtml(r) + '</button>').join("");
   main.innerHTML = '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">Inventory</h1></div>' +
-    '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px;"><label style="font-size:13px; color:var(--ink-faint);">Filter:</label>' + filterChips + '</div>' +
-    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 16px;">This list feeds the Fermentables/Hops/Yeast dropdowns on every recipe \u2014 add an ingredient here and it shows up there, and picking a brand-new name in a recipe adds it here too. \u201c+ Add Region\u201d pulls in the built-in specs for a country\u2019s hops/malts/yeast (there\u2019s no live database behind this \u2014 see REFRESH_CATALOGUE.md for how the list gets refreshed). Click one or more region chips above to hide everything else from view here \u2014 nothing is removed, and every item still shows up in recipe dropdowns regardless of the filter.</p>' +
+    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 10px;"><strong>Every recipe\u2019s Fermentables/Hops/Yeast dropdown always lists your entire inventory, from every region \u2014 the filter below only changes what\u2019s shown on this page.</strong> Add an ingredient here and it shows up in every recipe; type a brand-new name into a recipe and it\u2019s added here. \u201c+ Add Region\u201d pulls in the built-in specs for a country\u2019s hops/malts/yeast (there\u2019s no live database behind this \u2014 see REFRESH_CATALOGUE.md).</p>' +
+    '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:16px;">' +
+    '<button class="btn btn-sm" data-region-chip="__all__" style="' + (allShown ? "background:var(--amber);color:#fff;border-color:var(--amber);" : "") + '">Show Everything</button>' +
+    '<span style="color:var(--ink-faint);font-size:13px;">or just:</span>' + filterChips + '</div>' +
     INVENTORY_KINDS.map(pair => inventoryCardHtml(pair[0], pair[1])).join("");
 
-  main.querySelectorAll("[data-region-chip]").forEach(btn => btn.addEventListener("click", () => {
+  main.querySelectorAll("[data-region-chip]").forEach(btn => btn.addEventListener("click", (e) => {
+    e.preventDefault();
     const val = btn.dataset.regionChip;
     if (val === "__all__") { state.inventoryRegionFilter = []; }
     else {
@@ -1441,14 +1469,18 @@ function renderInventoryMain(main) {
     const kind = btn.dataset.addRegionBtn;
     const region = main.querySelector('[data-region-select="' + kind + '"]').value;
     const added = addRegionToInventory(kind, region);
+    // Adding a region you couldn't already see would otherwise look like nothing happened -
+    // reveal it in the filter (unless everything's already shown) so the new items are visible immediately.
+    if (state.inventoryRegionFilter.length > 0 && !state.inventoryRegionFilter.includes(region)) state.inventoryRegionFilter.push(region);
     saveToStorage(); renderMain();
     toast(added ? "Added " + added + " " + region + " item(s)" : "Already have everything from " + region);
   }));
   main.querySelectorAll("[data-add-all-btn]").forEach(btn => btn.addEventListener("click", () => {
     const kind = btn.dataset.addAllBtn;
     const added = addRegionToInventory(kind, "__all__");
+    state.inventoryRegionFilter = []; // just pulled in everything - show everything, rather than hiding most of it immediately
     saveToStorage(); renderMain();
-    toast(added ? "Added " + added + " item(s) from every region" : "Already have the full catalogue");
+    toast(added ? "Added " + added + " item(s) from every region \u2014 filter reset to Show Everything" : "Already have the full catalogue");
   }));
   main.querySelectorAll("[data-ifield]").forEach(el => el.addEventListener("input", () => {
     const row = el.closest("[data-kind]"); const kind = row.dataset.kind, idx = Number(row.dataset.idx);
@@ -1484,8 +1516,12 @@ function inventoryCardHtml(kind, label) {
       '<button class="btn btn-sm" data-add-region-btn="' + kind + '">+ Add Region</button>' +
       '<button class="btn btn-sm" data-add-all-btn="' + kind + '">+ Add All Regions</button>'
     : "";
+  const hiddenCount = state.inventory[kind].length - visible.length;
+  const hiddenNote = hiddenCount > 0
+    ? '<p style="color:var(--ink-faint); font-size:12px; margin:6px 0 0;">' + hiddenCount + ' more item(s) hidden by the filter above \u2014 <a href="#" data-region-chip="__all__" style="color:var(--amber);">show everything</a>.</p>'
+    : "";
   return '<div class="card"><h3>' + label + ' <span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;">' + regionControls + ' <button class="btn btn-sm" data-add-kind="' + kind + '">+ Add Item</button></span></h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:22%">Name</th>' + originHeader + specHeaders + '<th>Stock</th><th>Unit</th><th>Cost / unit ($)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    '<table class="ing-table"><thead><tr><th style="width:22%">Name</th>' + originHeader + specHeaders + '<th>Stock</th><th>Unit</th><th>Cost / unit ($)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' + hiddenNote + '</div>';
 }
 
 function inventoryRowHtml(kind, item, i) {
