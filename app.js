@@ -178,6 +178,7 @@ function equipmentRef(id) { return state.equipment.find(e => e.id === id); }
 
 // ---- Migration: backfill fields for recipes saved under earlier schema versions ----
 function migrateRecipe(r) {
+  delete r.yeastName; delete r.yeastAttenuation; delete r.yeastCost; delete r.targetFg;
   if (r.waterVolGal != null && r.mashWaterVolGal == null) {
     r.mashWaterVolGal = r.waterVolGal;
     r.spargeWaterVolGal = 0;
@@ -1141,6 +1142,7 @@ function wireTabEvents(r) {
   panel.querySelectorAll("[data-field]").forEach(el => {
     if (el.closest("[data-tbl]")) return;
     if (el.dataset.field === "preBoilVolGal") return; // handled specially below (empty = auto)
+    if (["yeastName", "yeastAttenuation", "yeastCost", "targetFg"].includes(el.dataset.field)) return; // these don't map to a flat r.<field> path - see dedicated handlers below
     el.addEventListener("input", () => {
       const path = el.dataset.field;
       let val = el.type === "number" ? Number(el.value) : el.value;
@@ -1432,8 +1434,8 @@ function batchCompareRow(label, est, actual) { return '<div class="stat-row"><sp
 function deductInventoryForBatch(r) {
   if (!r) return;
   let deducted = 0;
-  r.fermentables.forEach(f => { const item = state.inventory.fermentables.find(i => i.name.toLowerCase() === f.name.toLowerCase()); if (item) { item.stock -= Units.toDisplay(f.amountLb, "weight-lb", state.unitSystem); deducted++; } });
-  r.hops.forEach(h => { const item = state.inventory.hops.find(i => i.name.toLowerCase() === h.name.toLowerCase()); if (item) { item.stock -= Units.toDisplay(h.amountOz, "weight-oz", state.unitSystem); deducted++; } });
+  r.fermentables.forEach(f => { const item = state.inventory.fermentables.find(i => i.name.toLowerCase() === f.name.toLowerCase()); if (item) { item.stock -= Units.lbToUnit(f.amountLb, item.unit); deducted++; } });
+  r.hops.forEach(h => { const item = state.inventory.hops.find(i => i.name.toLowerCase() === h.name.toLowerCase()); if (item) { item.stock -= Units.lbToUnit(h.amountOz / 16, item.unit); deducted++; } });
   const yeastItem = state.inventory.yeast.find(i => i.name.toLowerCase() === r.yeast.name.toLowerCase());
   if (yeastItem) { yeastItem.stock -= 1; deducted++; }
   saveToStorage();
@@ -1512,7 +1514,7 @@ function inventoryCardHtml(kind, label) {
   const rows = visible.length ? visible.map(pair => inventoryRowHtml(kind, pair[0], pair[1])).join("")
     : '<tr class="empty-row"><td colspan="' + colCount + '">' + emptyMsg + '</td></tr>';
   const regionControls = isCatalogueKind
-    ? '<select class="btn btn-sm" data-region-select="' + kind + '">' + REGIONS.map(r => '<option ' + (r === state.region ? "selected" : "") + '>' + escapeHtml(r) + '</option>').join("") + '</select>' +
+    ? '<select class="btn btn-sm" data-region-select="' + kind + '">' + REGIONS.filter(r => r !== "Custom").map(r => '<option ' + (r === state.region ? "selected" : "") + '>' + escapeHtml(r) + '</option>').join("") + '</select>' +
       '<button class="btn btn-sm" data-add-region-btn="' + kind + '">+ Add Region</button>' +
       '<button class="btn btn-sm" data-add-all-btn="' + kind + '">+ Add All Regions</button>'
     : "";

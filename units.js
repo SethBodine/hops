@@ -41,6 +41,17 @@ const Units = {
     return v;
   },
 
+  // Convert a canonical weight in POUNDS to a specific inventory item's own stock unit
+  // (kg/g/lb/oz - independent of the global metric/imperial toggle, since an inventory row's
+  // unit is a free per-row choice, e.g. tracking hops in kg while the interface is in Imperial).
+  // Non-weight units (pkg/tablet/item) can't be converted from a weight, so the raw lb value
+  // is returned unchanged as the least-wrong fallback.
+  lbToUnit(lb, unit) {
+    const perLb = { kg: 0.45359237, g: 453.59237, lb: 1, oz: 16 };
+    const factor = perLb[unit];
+    return factor != null ? lb * factor : lb;
+  },
+
   unitLabel(kind, system) {
     if (kind === "color-srm") return system === "metric" ? "EBC" : "SRM";
     if (system !== "metric") {
