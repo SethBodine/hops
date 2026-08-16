@@ -43,6 +43,18 @@ request deployment, download the three font families used (Fraunces, Inter, JetB
 and self-host the `.woff2` files instead — the CSP and CSS would both need a small update to
 point at `'self'` instead of `fonts.googleapis.com`/`fonts.gstatic.com`.
 
+## Deploys not showing up without a hard refresh
+
+`_headers` also sets `Cache-Control: no-cache` on every file. `app.js`, `data.js`, `style.css`,
+etc. are served under static, unhashed filenames (unlike a typical bundler build that names
+files `app.a1b2c3.js`), so without an explicit header the browser and Cloudflare's edge have
+no signal to ever re-check them after the first load - a push can go live and visitors just
+keep getting the previous version until they hard-refresh. `no-cache` doesn't disable caching;
+it makes the browser/edge revalidate (a cheap conditional `If-None-Match` request) on every
+load, so a new deploy is served the moment it's live. `index.html` previously worked around
+this with manual `?v=4` query strings on every `<script>`/`<link>` tag, which only helped if
+someone remembered to bump the number on every release - removed now that it's unnecessary.
+
 ## Reporting a concern
 
 This is a small personal-use project without a formal disclosure process, but if you spot

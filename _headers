@@ -6,3 +6,9 @@
   Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=()
   Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
   Cross-Origin-Opener-Policy: same-origin
+  Cache-Control: no-cache
+
+# Filenames here are static (app.js, not app.<hash>.js), so without this, the browser/edge
+# has no reason to ever re-check after the first load - "no-cache" still allows caching, it
+# just forces a conditional revalidation (If-None-Match) on every request, so a new deploy is
+# served the moment it's live instead of needing a manual ?v=N bump or a hard refresh.
