@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Hops — Brewing Recipe Builder</title>
 <meta name="description" content="Free, self-contained homebrew recipe builder. No account, no cost, all data stays in your browser." />
+<!-- This meta CSP is a fallback only (e.g. if _headers somehow doesn't apply). Per the CSP
+     spec, `frame-ancestors` (and `sandbox`/`report-uri`) are ignored when delivered via
+     <meta> - they only take effect as a real HTTP response header, which is why the
+     authoritative copy of this policy (plus X-Frame-Options, HSTS, etc.) lives in /_headers
+     for Cloudflare Pages to serve. Keep both copies in sync if you change this. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://b0x.nz https://shh.insecure.co.nz; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none';" />
 <link rel="stylesheet" href="style.css?v=4" />
 </head>

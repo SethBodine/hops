@@ -228,6 +228,55 @@ button {
   box-shadow: var(--shadow);
 }
 .modal-box h3 { margin-top: 0; }
+.modal-box.picker-modal { max-width: 560px; max-height: 82vh; display: flex; flex-direction: column; }
+.picker-search {
+  width: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 12px;
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.picker-search:focus { outline: none; border-color: var(--amber-dim); }
+.picker-list { overflow-y: auto; margin-top: 6px; padding-right: 2px; }
+.picker-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  font-weight: 700;
+  padding: 10px 4px 4px;
+}
+.picker-group-label:first-child { padding-top: 4px; }
+.picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.picker-row:hover { background: var(--card); }
+.picker-row.current { background: rgba(199,146,58,0.12); border: 1px solid var(--amber-dim); }
+.picker-row-name { font-size: 13.5px; color: var(--ink); font-weight: 600; }
+.picker-row-meta { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px; }
+.picker-stock { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; flex-shrink: 0; }
+.picker-stock.low { color: var(--alert); }
+
+/* Ingredient-table "picker" buttons (replace the old <select> for name) */
+.ing-table .picker-btn, .field .picker-btn {
+  width: 100%;
+  text-align: left;
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .share-link-input {
   width: 100%;
   background: var(--bg-panel);
@@ -492,7 +541,7 @@ table.ing-table .del-btn:hover { color: var(--alert); }
 /* ---- Style comparison bars ---- */
 .style-compare-row {
   display: grid;
-  grid-template-columns: 130px 1fr 90px;
+  grid-template-columns: 130px 1fr 90px 110px;
   align-items: center;
   gap: 14px;
   padding: 9px 0;
@@ -521,8 +570,35 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   border: 2px solid var(--bg-deep);
   transform: translateX(-50%);
 }
-.style-compare-row.out .dot { background: var(--alert); }
+.style-compare-row.out .dot.dot-est { background: var(--alert); }
+.style-compare-row .dot.dot-override {
+  background: var(--ink);
+  width: 10px; height: 10px;
+  top: -1px;
+  z-index: 2;
+}
+.style-compare-row .dot.dot-override.out { background: var(--alert); }
 .style-compare-row .value-label { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-align: right; }
+.style-compare-row .value-label .range-text { display: block; font-size: 10.5px; color: var(--ink-faint); margin-top: 2px; }
+.style-compare-row .override-cell { display: flex; align-items: center; gap: 4px; }
+.style-compare-row .override-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink);
+}
+.style-compare-row .override-input:focus { outline: none; border-color: var(--amber-dim); }
+.style-compare-row .override-input::placeholder { color: var(--ink-faint); font-family: 'Inter', sans-serif; }
+.style-compare-row .override-clear {
+  background: none; border: none; color: var(--ink-faint);
+  font-size: 12px; cursor: pointer; padding: 2px 4px; flex-shrink: 0;
+}
+.style-compare-row .override-clear:hover { color: var(--alert); }
 
 /* ---- Water page ---- */
 .ion-grid {
@@ -598,6 +674,17 @@ textarea.notes-area:focus { outline: none; border-color: var(--amber-dim); }
 
 @media (max-width: 860px) {
   #app { grid-template-columns: 1fr; }
+
+  .style-compare-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "name value" "track track" "override override";
+    row-gap: 6px;
+  }
+  .style-compare-row .metric-name { grid-area: name; }
+  .style-compare-row .value-label { grid-area: value; }
+  .style-compare-row .track { grid-area: track; }
+  .style-compare-row .override-cell { grid-area: override; }
+  .modal-box.picker-modal { max-width: 100%; max-height: 88vh; }
 
   .mobile-topbar {
     display: flex;

@@ -21,27 +21,6 @@ let state = {
 function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
 function nzDate(iso) { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleDateString("en-NZ"); }
 
-// Groups an ingredient library (state.inventory.fermentables/hops/yeast) into <optgroup>s by
-// region (state.region) shown first, then the rest of the known regions, then anything uncategorised.
-function regionGroupedOptions(library, currentName, known) {
-  const groups = new Map();
-  library.forEach(x => {
-    const g = x.origin || "Custom";
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(x);
-  });
-  const order = [state.region].concat(REGIONS.filter(r => r !== state.region)).concat(["Custom"]);
-  let html = "";
-  order.forEach(g => {
-    const items = groups.get(g);
-    if (!items || !items.length) return;
-    html += '<optgroup label="' + escapeHtml(g) + '">' + items.map(x => '<option value="' + escapeHtml(x.name) + '" ' + (known && x.name === currentName ? "selected" : "") + '>' + escapeHtml(x.name) + '</option>').join("") + '</optgroup>';
-    groups.delete(g);
-  });
-  groups.forEach((items, g) => { html += '<optgroup label="' + escapeHtml(g) + '">' + items.map(x => '<option value="' + escapeHtml(x.name) + '" ' + (known && x.name === currentName ? "selected" : "") + '>' + escapeHtml(x.name) + '</option>').join("") + '</optgroup>'; });
-  return html;
-}
-
 // ---- Factories ----
 function newRecipe() {
   return {
@@ -54,6 +33,10 @@ function newRecipe() {
     boilTimeMin: 60,
     efficiencyPct: 70,
     styleName: "American Pale Ale",
+    // Manual overrides for the Style Guide Comparison (e.g. a measured OG, or a final
+    // fermentable's stated gravity) - null means "use the calculated estimate". Canonical
+    // units throughout (SG for og/fg, IBU, SRM, % for abv), same as the calculated values.
+    styleOverride: { og: null, fg: null, ibu: null, srm: null, abv: null },
     fermentables: [{ name: "Maris Otter (Crisp)", type: "Grain", amountLb: 10, ppg: 37, color: 4, mashable: true, cost: 0 }],
     hops: [{ name: "Cascade", amountOz: 1, alphaPct: 6.0, timeMin: 60, use: "Boil", whirlpoolTempF: 194, cost: 0 }],
     yeast: { name: "American Ale (Wyeast #1056)", type: "Ale", attenuation: 0.75, cost: 0 },
@@ -193,6 +176,7 @@ function migrateRecipe(r) {
   if (!r.carbProfileName) r.carbProfileName = "Custom";
   if (!r.fermentationProfileName) r.fermentationProfileName = "Custom";
   if (r.preBoilVolGal === undefined) r.preBoilVolGal = null;
+  if (!r.styleOverride) r.styleOverride = { og: null, fg: null, ibu: null, srm: null, abv: null };
   (r.waterSalts || []).forEach(s => { if (!s.use) s.use = "Mash"; });
   (r.hops || []).forEach(h => { if (h.whirlpoolTempF == null) h.whirlpoolTempF = 194; });
   return r;
@@ -269,12 +253,12 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 2400);
 }
-function showModal(innerHtml, onMount) {
+function showModal(innerHtml, onMount, extraClass) {
   closeModal();
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.id = "modalOverlay";
-  overlay.innerHTML = '<div class="modal-box">' + innerHtml + '</div>';
+  overlay.innerHTML = '<div class="modal-box' + (extraClass ? " " + extraClass : "") + '">' + innerHtml + '</div>';
   overlay.addEventListener("click", e => { if (e.target === overlay) closeModal(); });
   document.body.appendChild(overlay);
   if (onMount) onMount(overlay);
@@ -921,35 +905,23 @@ function uVal(canonical, kind) { return +Units.toDisplay(canonical, kind, state.
 // ---- Design tab ----
 function designTabHtml(r, style) {
   const d = computeDerived(r);
-  const fermLibrary = state.inventory.fermentables;
-  const hopLibrary = state.inventory.hops;
-  const yeastLibrary = state.inventory.yeast;
-  function buildIngredientSelect(library, currentName) {
-    const known = library.some(x => x.name === currentName);
-    let opts = "";
-    if (!known && currentName) opts += '<option value="' + escapeHtml(currentName) + '" selected>' + escapeHtml(currentName) + ' (custom)</option>';
-    opts += '<option value="__custom__">\u2014 Custom Name\u2026 \u2014</option>';
-    opts += regionGroupedOptions(library, currentName, known);
-    return opts;
-  }
   const equipOptions = state.equipment.map(e => '<option value="' + e.id + '" ' + (r.equipmentId === e.id ? "selected" : "") + '>' + escapeHtml(e.name) + '</option>').join("");
-  const styleOptions = STYLES.map(s => '<option ' + (r.styleName === s.name ? "selected" : "") + '>' + s.name + '</option>').join("");
 
   const fermRows = r.fermentables.length ? r.fermentables.map((f, i) =>
     '<tr data-idx="' + i + '">' +
-    '<td><select data-tbl="fermentables" data-field="name">' + buildIngredientSelect(fermLibrary, f.name) + '</select></td>' +
+    '<td><button type="button" class="btn btn-sm picker-btn" data-open-picker="fermentables" title="Click to choose a different fermentable">' + escapeHtml(f.name) + '</button></td>' +
     '<td><input type="number" step="0.1" data-tbl="fermentables" data-field="amountLb" data-unitkind="weight-lb" value="' + uVal(f.amountLb, "weight-lb") + '"/></td>' +
     '<td><select data-tbl="fermentables" data-field="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (f.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
     '<td><input type="number" step="0.5" data-tbl="fermentables" data-field="ppg" value="' + f.ppg + '"/></td>' +
     '<td><input type="number" step="0.1" data-tbl="fermentables" data-field="color" data-unitkind="color-srm" value="' + uVal(f.color, "color-srm") + '"/></td>' +
     '<td class="num grist-pct">' + (d.grainPercents[i] || 0).toFixed(1) + '%</td>' +
     '<td><input type="number" step="0.01" data-tbl="fermentables" data-field="cost" value="' + (f.cost || 0) + '"/></td>' +
-    '<td class="row-actions"><button class="btn btn-sm" data-substitute="fermentables">Sub</button><button class="btn btn-sm" data-save-item="fermentables">Save</button><button class="del-btn" data-del="fermentables">\u2715</button></td></tr>'
+    '<td class="row-actions"><button class="btn btn-sm" data-save-item="fermentables">Save</button><button class="del-btn" data-del="fermentables">\u2715</button></td></tr>'
   ).join("") : '<tr class="empty-row"><td colspan="8">No fermentables yet</td></tr>';
 
   const hopRows = r.hops.length ? r.hops.map((h, i) =>
     '<tr data-idx="' + i + '">' +
-    '<td><select data-tbl="hops" data-field="name">' + buildIngredientSelect(hopLibrary, h.name) + '</select></td>' +
+    '<td><button type="button" class="btn btn-sm picker-btn" data-open-picker="hops" title="Click to choose a different hop">' + escapeHtml(h.name) + '</button></td>' +
     '<td><input type="number" step="0.1" data-tbl="hops" data-field="amountOz" data-unitkind="weight-oz" value="' + uVal(h.amountOz, "weight-oz") + '"/></td>' +
     '<td><input type="number" step="0.1" data-tbl="hops" data-field="alphaPct" value="' + h.alphaPct + '"/></td>' +
     '<td><input type="number" step="1" data-tbl="hops" data-field="timeMin" value="' + h.timeMin + '"/></td>' +
@@ -957,7 +929,7 @@ function designTabHtml(r, style) {
     '<td>' + (h.use === "Whirlpool" ? '<input type="number" step="1" data-tbl="hops" data-field="whirlpoolTempF" data-unitkind="temp-f" value="' + uVal(h.whirlpoolTempF != null ? h.whirlpoolTempF : 194, "temp-f") + '" title="Whirlpool/stand temperature - the single biggest factor in how much IBU a whirlpool addition contributes"/>' : '<span style="color:var(--ink-faint);">\u2014</span>') + '</td>' +
     '<td class="num hop-ibu">' + (d.ibuBreakdown[i] || 0).toFixed(1) + '</td>' +
     '<td><input type="number" step="0.01" data-tbl="hops" data-field="cost" value="' + (h.cost || 0) + '"/></td>' +
-    '<td class="row-actions"><button class="btn btn-sm" data-substitute="hops">Sub</button><button class="btn btn-sm" data-save-item="hops">Save</button><button class="del-btn" data-del="hops">\u2715</button></td></tr>'
+    '<td class="row-actions"><button class="btn btn-sm" data-save-item="hops">Save</button><button class="del-btn" data-del="hops">\u2715</button></td></tr>'
   ).join("") : '<tr class="empty-row"><td colspan="9">No hops yet</td></tr>';
 
   const miscRows = r.misc.length ? r.misc.map((m, i) =>
@@ -978,14 +950,14 @@ function designTabHtml(r, style) {
     '<div class="field"><label>Batch Size (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="batchVolGal" data-unitkind="volume-gal" value="' + uVal(r.batchVolGal, "volume-gal") + '"/></div>' +
     '<div class="field"><label>Boil Time (min)</label><input type="number" step="1" data-field="boilTimeMin" value="' + r.boilTimeMin + '"/></div>' +
     '<div class="field"><label>Mash Efficiency (%)</label><input type="number" step="1" data-field="efficiencyPct" value="' + r.efficiencyPct + '"/></div>' +
-    '<div class="field"><label>Style</label><select data-field="styleName">' + styleOptions + '</select></div>' +
+    '<div class="field"><label>Style</label><button type="button" class="btn btn-sm picker-btn" data-open-picker="style" style="width:100%;text-align:left;">' + escapeHtml(r.styleName || "\u2014 choose a style \u2014") + '</button></div>' +
     '</div></div>' +
     '<div class="card"><h3>Fermentables <button class="btn btn-sm" data-action="addFermentable">+ Add Fermentable</button></h3>' +
     '<table class="ing-table"><thead><tr><th style="width:22%">Name</th><th>Amount (' + uLabel("weight-lb") + ')</th><th>Type</th><th>PPG</th><th>Colour (' + uLabel("color-srm") + ')</th><th>% Grist</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + fermRows + '</tbody></table></div>' +
     '<div class="card"><h3>Hops <button class="btn btn-sm" data-action="addHop">+ Add Hop</button></h3>' +
     '<table class="ing-table"><thead><tr><th style="width:18%">Name</th><th>Amount (' + uLabel("weight-oz") + ')</th><th>Alpha %</th><th>Time (min)</th><th>Use</th><th>Stand Temp (' + uLabel("temp-f") + ')</th><th>IBU</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + hopRows + '</tbody></table></div>' +
-    '<div class="card"><h3>Yeast <span><button class="btn btn-sm" data-substitute="yeast">Substitute</button> <button class="btn btn-sm" data-save-item="yeast">Save Item</button></span></h3><div class="field-grid">' +
-    '<div class="field"><label>Strain</label><select data-field="yeastName">' + buildIngredientSelect(yeastLibrary, r.yeast.name) + '</select></div>' +
+    '<div class="card"><h3>Yeast <span><button class="btn btn-sm" data-save-item="yeast">Save Item</button></span></h3><div class="field-grid">' +
+    '<div class="field"><label>Strain</label><button type="button" class="btn btn-sm picker-btn" data-open-picker="yeast" style="width:100%;text-align:left;">' + escapeHtml(r.yeast.name || "\u2014 choose a strain \u2014") + '</button></div>' +
     '<div class="field"><label>Attenuation (%)</label><input type="number" step="1" data-field="yeastAttenuation" value="' + (r.yeast.attenuation * 100).toFixed(0) + '"/></div>' +
     '<div class="field"><label>Target Final Gravity' + (style ? ' <button class="btn btn-sm" data-action="matchStyleFg" title="Set to the middle of ' + escapeHtml(style.name) + '\u2019s FG range" style="padding:0 6px;">Match Style</button>' : "") + '</label><input type="number" step="0.001" data-field="targetFg" value="' + d.fg.toFixed(3) + '"/></div>' +
     '<div class="field"><label>Cost ($)</label><input type="number" step="0.01" data-field="yeastCost" value="' + (r.yeast.cost || 0) + '"/></div>' +
@@ -1018,24 +990,44 @@ function applyTargetFg(r, targetFg) {
   if (attenuation > 1) toast("That FG is lower than 100% attenuation can reach from this OG \u2014 capped at 100%");
   else if (attenuation < 0) toast("That FG is above the wort's OG \u2014 capped at 0% attenuation");
 }
+// Each row: [label, calculated value, style range, formatter, override field name, step, unitkind]
+function styleCompareRows(r, d, style) {
+  return [
+    ["Original Gravity", d.og, style.og, v => v.toFixed(3), "og", "0.001", null],
+    ["Final Gravity", d.fg, style.fg, v => v.toFixed(3), "fg", "0.001", null],
+    ["ABV", d.abv, style.abv, v => v.toFixed(1) + "%", "abv", "0.1", null],
+    ["Bitterness (IBU)", d.ibu, style.ibu, v => Math.round(v), "ibu", "1", null],
+    ["Colour (" + uLabel("color-srm") + ")", uVal(d.srm, "color-srm"), style.srm.map(v => uVal(v, "color-srm")), v => v.toFixed(1), "srm", "0.1", "color-srm"],
+  ];
+}
+
 function styleCompareHtml(r, style) {
   const d = computeDerived(r);
-  const rows = [
-    ["Original Gravity", d.og, style.og, v => v.toFixed(3)],
-    ["Final Gravity", d.fg, style.fg, v => v.toFixed(3)],
-    ["ABV", d.abv, style.abv, v => v.toFixed(1) + "%"],
-    ["Bitterness (IBU)", d.ibu, style.ibu, v => Math.round(v)],
-    ["Colour (" + uLabel("color-srm") + ")", uVal(d.srm, "color-srm"), style.srm.map(v => uVal(v, "color-srm")), v => v.toFixed(1)],
-  ];
-  return rows.map(row => {
-    const label = row[0], val = row[1], range = row[2], fmt = row[3];
+  const ov = r.styleOverride || {};
+  return styleCompareRows(r, d, style).map(row => {
+    const label = row[0], val = row[1], range = row[2], fmt = row[3], field = row[4], step = row[5], unitkind = row[6];
     const lo = range[0], hi = range[1];
-    const spanLo = Math.min(lo, val) - (hi - lo) * 0.15, spanHi = Math.max(hi, val) + (hi - lo) * 0.15;
+    // Override is stored in canonical units - convert to display units for showing/editing, same as the calculated value.
+    const rawOverride = ov[field];
+    const overrideVal = rawOverride == null ? null : (unitkind ? uVal(rawOverride, unitkind) : Number(rawOverride));
+    const hasOverride = overrideVal != null && !isNaN(overrideVal);
+    const spanLo = Math.min(lo, val, hasOverride ? overrideVal : lo) - (hi - lo) * 0.15;
+    const spanHi = Math.max(hi, val, hasOverride ? overrideVal : hi) + (hi - lo) * 0.15;
     const pct = v => ((v - spanLo) / (spanHi - spanLo)) * 100;
     const inRange = Calc.inRange(val, range);
-    return '<div class="style-compare-row ' + (inRange ? "" : "out") + '"><div class="metric-name">' + label + '</div>' +
-      '<div class="track"><div class="band" style="left:' + pct(lo) + '%; width:' + (pct(hi) - pct(lo)) + '%;"></div><div class="dot" style="left:' + pct(val) + '%;"></div></div>' +
-      '<div class="value-label">' + fmt(val) + '</div></div>';
+    const overrideInRange = hasOverride && Calc.inRange(unitkind ? rawOverride : overrideVal, range);
+    return '<div class="style-compare-row ' + (inRange ? "" : "out") + '">' +
+      '<div class="metric-name">' + label + '</div>' +
+      '<div class="track"><div class="band" style="left:' + pct(lo) + '%; width:' + (pct(hi) - pct(lo)) + '%;"></div>' +
+      '<div class="dot dot-est" title="Estimated: ' + fmt(val) + '" style="left:' + pct(val) + '%;"></div>' +
+      (hasOverride ? '<div class="dot dot-override ' + (overrideInRange ? "" : "out") + '" title="Override: ' + fmt(overrideVal) + '" style="left:' + pct(overrideVal) + '%;"></div>' : '') +
+      '</div>' +
+      '<div class="value-label">' + fmt(val) + '<span class="range-text">' + fmt(lo) + '\u2013' + fmt(hi) + '</span></div>' +
+      '<div class="override-cell">' +
+      '<input type="number" step="' + step + '" class="override-input" data-field="styleOverride.' + field + '"' + (unitkind ? ' data-unitkind="' + unitkind + '"' : '') +
+      ' placeholder="Override" value="' + (hasOverride ? overrideVal : "") + '" title="Manual/measured override - shown alongside the estimate, doesn\u2019t replace it"/>' +
+      (hasOverride ? '<button class="override-clear" data-clear-override="' + field + '" title="Clear override">\u2715</button>' : '') +
+      '</div></div>';
   }).join("");
 }
 
@@ -1142,7 +1134,8 @@ function wireTabEvents(r) {
   panel.querySelectorAll("[data-field]").forEach(el => {
     if (el.closest("[data-tbl]")) return;
     if (el.dataset.field === "preBoilVolGal") return; // handled specially below (empty = auto)
-    if (["yeastName", "yeastAttenuation", "yeastCost", "targetFg"].includes(el.dataset.field)) return; // these don't map to a flat r.<field> path - see dedicated handlers below
+    if (["yeastAttenuation", "yeastCost", "targetFg"].includes(el.dataset.field)) return; // these don't map to a flat r.<field> path - see dedicated handlers below
+    if (el.dataset.field.indexOf("styleOverride.") === 0) return; // wired with "change" below - "input" would rebuild the card mid-keystroke and drop focus
     el.addEventListener("input", () => {
       const path = el.dataset.field;
       let val = el.type === "number" ? Number(el.value) : el.value;
@@ -1160,26 +1153,26 @@ function wireTabEvents(r) {
       const tbl = el.dataset.tbl, idx = Number(el.closest("[data-idx]").dataset.idx), field = el.dataset.field;
       let val = el.type === "number" ? Number(el.value) : el.value;
       if (el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
-      if (field === "name" && val === "__custom__") {
-        const name = window.prompt("Name for this custom " + (tbl === "fermentables" ? "fermentable" : "hop") + ":", r[tbl][idx].name);
-        if (!name) { renderMain(); return; } // cancelled - re-render to reset the select back to its previous value
-        val = name;
-      }
       r[tbl][idx][field] = val;
-      if (field === "name" && tbl === "fermentables") {
-        const match = state.inventory.fermentables.find(f => f.name.toLowerCase() === String(val).toLowerCase());
-        if (match) { r.fermentables[idx].ppg = match.ppg; r.fermentables[idx].color = match.srm; r.fermentables[idx].type = match.type; r.fermentables[idx].mashable = match.mashable; }
-        else { const row = Object.assign(newInventoryItem("fermentables"), { name: val }); state.inventory.fermentables.push(row); }
-      }
-      if (field === "name" && tbl === "hops") {
-        const match = state.inventory.hops.find(h => h.name.toLowerCase() === String(val).toLowerCase());
-        if (match) r.hops[idx].alphaPct = match.alpha;
-        else { const row = Object.assign(newInventoryItem("hops"), { name: val }); state.inventory.hops.push(row); }
-      }
       saveToStorage();
-      if ((field === "name" && (tbl === "fermentables" || tbl === "hops")) || (field === "use" && tbl === "hops")) renderMain(); else refreshComputed(r);
+      if (field === "use" && tbl === "hops") renderMain(); else refreshComputed(r);
     });
   });
+  panel.querySelectorAll("[data-open-picker]").forEach(btn => btn.addEventListener("click", () => {
+    const kind = btn.dataset.openPicker;
+    if (kind === "style") {
+      openIngredientPicker("style", STYLES, r.styleName, false, item => applyStyleChoice(r, item));
+    } else if (kind === "yeast") {
+      openIngredientPicker("yeast", state.inventory.yeast, r.yeast.name, true, item => applyYeastChoice(r, item));
+    } else {
+      const idx = Number(btn.closest("[data-idx]").dataset.idx);
+      if (kind === "fermentables") {
+        openIngredientPicker("fermentables", state.inventory.fermentables, r.fermentables[idx].name, true, item => applyFermentableChoice(r, idx, item));
+      } else {
+        openIngredientPicker("hops", state.inventory.hops, r.hops[idx].name, true, item => applyHopChoice(r, idx, item));
+      }
+    }
+  }));
   panel.querySelectorAll("[data-del]").forEach(btn => btn.addEventListener("click", () => {
     const tbl = btn.dataset.del, idx = Number(btn.closest("[data-idx]").dataset.idx);
     r[tbl].splice(idx, 1); saveToStorage(); renderMain();
@@ -1195,21 +1188,6 @@ function wireTabEvents(r) {
   panel.querySelectorAll("[data-action]").forEach(btn => { const fn = actions[btn.dataset.action]; if (fn) btn.addEventListener("click", () => { fn(); saveToStorage(); if (state.activeSection === "recipes") renderMain(); else renderAll(); }); });
   panel.querySelectorAll(".history-row").forEach(row => row.addEventListener("click", () => { state.activeBatchId = row.dataset.batchId; state.activeSection = "batches"; saveToStorage(); renderAll(); }));
 
-  const yeastName = panel.querySelector('[data-field="yeastName"]');
-  if (yeastName) yeastName.addEventListener("input", () => {
-    let val = yeastName.value;
-    if (val === "__custom__") {
-      const name = window.prompt("Name for this custom yeast strain:", r.yeast.name);
-      if (!name) { renderMain(); return; }
-      val = name;
-    }
-    r.yeast.name = val;
-    const match = state.inventory.yeast.find(y => y.name.toLowerCase() === val.toLowerCase());
-    if (match) { r.yeast.attenuation = match.attenuation; r.yeast.type = match.type; }
-    else { const row = Object.assign(newInventoryItem("yeast"), { name: val }); state.inventory.yeast.push(row); }
-    saveToStorage();
-    renderMain();
-  });
   const yeastAtt = panel.querySelector('[data-field="yeastAttenuation"]');
   if (yeastAtt) yeastAtt.addEventListener("input", () => { r.yeast.attenuation = Number(yeastAtt.value) / 100; saveToStorage(); refreshComputed(r); });
   const yeastCost = panel.querySelector('[data-field="yeastCost"]');
@@ -1232,8 +1210,6 @@ function wireTabEvents(r) {
     saveToStorage(); renderMain();
     if (eq) toast('Applied "' + eq.name + '" equipment defaults');
   });
-  const styleSel = panel.querySelector('[data-field="styleName"]');
-  if (styleSel) styleSel.addEventListener("change", () => { r.styleName = styleSel.value; saveToStorage(); renderMain(); });
   const mashProfileSel = panel.querySelector('[data-field="mashProfileName"]');
   if (mashProfileSel) mashProfileSel.addEventListener("change", () => { r.mashProfileName = mashProfileSel.value; r.mashSteps = JSON.parse(JSON.stringify(MASH_PROFILES[r.mashProfileName])); saveToStorage(); renderMain(); });
   const targetSel = document.getElementById("targetProfileSelect");
@@ -1254,44 +1230,145 @@ function wireTabEvents(r) {
     saveToStorage(); renderMain();
   });
 
-  // ---- Substitute & Save Item (personal ingredient library) ----
-  panel.querySelectorAll("[data-substitute]").forEach(btn => btn.addEventListener("click", e => {
-    e.stopPropagation();
-    openSubstitutePicker(e, btn.dataset.substitute, btn.closest("[data-idx]"), r);
-  }));
+  // ---- Save Item (personal ingredient library) ----
   panel.querySelectorAll("[data-save-item]").forEach(btn => btn.addEventListener("click", () => {
     saveItemToLibrary(btn.dataset.saveItem, btn.closest("[data-idx]"), r);
   }));
+
+  // ---- Style Guide Comparison: manual override inputs (change, not input - see note above) ----
+  panel.querySelectorAll('[data-field^="styleOverride."]').forEach(el => el.addEventListener("change", () => {
+    const field = el.dataset.field.split(".")[1];
+    let val = el.value === "" ? null : Number(el.value);
+    if (val != null && el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
+    r.styleOverride[field] = val;
+    saveToStorage(); refreshComputed(r);
+  }));
+  panel.querySelectorAll("[data-clear-override]").forEach(btn => btn.addEventListener("click", () => {
+    r.styleOverride[btn.dataset.clearOverride] = null;
+    saveToStorage(); refreshComputed(r);
+  }));
 }
 
-function openSubstitutePicker(e, kind, rowEl, r) {
-  let library, applyFn;
-  if (kind === "fermentables") {
-    library = state.inventory.fermentables;
-    applyFn = (item) => {
-      const idx = Number(rowEl.dataset.idx);
-      snapshotUndo(r);
-      Object.assign(r.fermentables[idx], { name: item.name, ppg: item.ppg, color: item.srm, type: item.type, mashable: item.mashable });
-      saveToStorage(); renderMain(); toast("Substituted " + item.name);
-    };
-  } else if (kind === "hops") {
-    library = state.inventory.hops;
-    applyFn = (item) => {
-      const idx = Number(rowEl.dataset.idx);
-      snapshotUndo(r);
-      r.hops[idx].name = item.name; r.hops[idx].alphaPct = item.alpha;
-      saveToStorage(); renderMain(); toast("Substituted " + item.name);
-    };
-  } else {
-    library = state.inventory.yeast;
-    applyFn = (item) => {
-      snapshotUndo(r);
-      r.yeast.name = item.name; r.yeast.attenuation = item.attenuation; r.yeast.type = item.type;
-      saveToStorage(); renderMain(); toast("Substituted " + item.name);
-    };
+// ---- Rich picker modal ----
+// Replaces the old plain <select> dropdowns (and the old right-click Substitute context menu)
+// for Style/Fermentables/Hops/Yeast: a searchable, region-grouped list showing each item's
+// key spec and (for inventory-backed kinds) its current stock level, so a long catalogue is
+// actually browsable instead of just an alphabetical wall of names in a <select>.
+
+function pickerItemMeta(kind, item) {
+  if (kind === "style") {
+    return item.og[0].toFixed(3) + "\u2013" + item.og[1].toFixed(3) + " OG \u00b7 " + item.ibu[0] + "\u2013" + item.ibu[1] + " IBU \u00b7 " +
+      uVal(item.srm[0], "color-srm").toFixed(0) + "\u2013" + uVal(item.srm[1], "color-srm").toFixed(0) + " " + uLabel("color-srm") + " \u00b7 " +
+      item.abv[0].toFixed(1) + "\u2013" + item.abv[1].toFixed(1) + "% ABV";
   }
-  const items = library.map(item => ({ label: item.name, action: () => applyFn(item) }));
-  showContextMenu(e.clientX, e.clientY, items.length ? items : [{ label: "No ingredients available", action: () => {} }]);
+  if (kind === "fermentables") return item.type + " \u00b7 " + item.ppg + " PPG \u00b7 " + uVal(item.srm, "color-srm").toFixed(1) + " " + uLabel("color-srm");
+  if (kind === "hops") return item.alpha.toFixed(1) + "% alpha acid";
+  return item.type + " \u00b7 " + Math.round(item.attenuation * 100) + "% attenuation"; // yeast
+}
+function pickerItemGroup(kind, item) { return kind === "style" ? (item.category || "Other") : (item.origin || "Custom"); }
+function pickerStockBadge(kind, item) {
+  if (kind === "style" || item.stock == null) return "";
+  const low = Number(item.stock) <= 0;
+  return '<span class="picker-stock' + (low ? " low" : "") + '">' + (low ? "Out of stock" : item.stock + " " + escapeHtml(item.unit || "")) + '</span>';
+}
+
+// kind: "style" | "fermentables" | "hops" | "yeast". library: array to list (STYLES, or
+// state.inventory.<kind>). currentName: pre-selected item, for highlighting. allowCustom:
+// whether "type a new name" is offered (not applicable to style). onSelect(item|name) fires
+// with either the matched catalogue/inventory object, or a plain string for a new custom name.
+function openIngredientPicker(kind, library, currentName, allowCustom, onSelect) {
+  const groups = new Map();
+  library.forEach(item => {
+    const g = pickerItemGroup(kind, item);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(item);
+  });
+  const knownGroups = kind === "style"
+    ? Array.from(new Set(library.map(s => s.category || "Other")))
+    : REGIONS;
+  const order = kind === "style" ? knownGroups : [state.region].concat(REGIONS.filter(x => x !== state.region));
+  const renderList = (filterText) => {
+    const q = (filterText || "").trim().toLowerCase();
+    let html = "";
+    let anyMatch = false;
+    order.forEach(g => {
+      const items = (groups.get(g) || []).filter(item => !q || item.name.toLowerCase().indexOf(q) !== -1);
+      if (!items.length) return;
+      anyMatch = true;
+      html += '<div class="picker-group-label">' + escapeHtml(g) + '</div>';
+      html += items.map(item =>
+        '<div class="picker-row' + (item.name === currentName ? " current" : "") + '" data-picker-name="' + escapeHtml(item.name) + '">' +
+        '<div class="picker-row-main"><div class="picker-row-name">' + escapeHtml(item.name) + '</div>' +
+        '<div class="picker-row-meta">' + escapeHtml(pickerItemMeta(kind, item)) + '</div></div>' +
+        pickerStockBadge(kind, item) +
+        '</div>'
+      ).join("");
+    });
+    return anyMatch ? html : '<p style="color:var(--ink-faint);font-size:13px;padding:8px 2px;">No matches.</p>';
+  };
+  const title = { style: "Choose a Style", fermentables: "Choose a Fermentable", hops: "Choose a Hop", yeast: "Choose a Yeast Strain" }[kind];
+  const html =
+    '<h3>' + title + '</h3>' +
+    '<input type="text" class="picker-search" placeholder="Search by name\u2026" autofocus/>' +
+    (allowCustom ? '<button class="btn btn-sm" data-picker-custom style="margin:8px 0;">+ Type a Custom Name\u2026</button>' : "") +
+    '<div class="picker-list">' + renderList("") + '</div>';
+  showModal(html, (overlay) => {
+    const searchEl = overlay.querySelector(".picker-search");
+    const listEl = overlay.querySelector(".picker-list");
+    const wireRows = () => {
+      listEl.querySelectorAll("[data-picker-name]").forEach(row => row.addEventListener("click", () => {
+        const item = library.find(x => x.name === row.dataset.pickerName);
+        closeModal();
+        if (item) onSelect(item);
+      }));
+    };
+    wireRows();
+    searchEl.addEventListener("input", () => { listEl.innerHTML = renderList(searchEl.value); wireRows(); });
+    searchEl.focus();
+    const customBtn = overlay.querySelector("[data-picker-custom]");
+    if (customBtn) customBtn.addEventListener("click", () => {
+      const name = window.prompt("Custom " + (kind === "fermentables" ? "fermentable" : kind === "hops" ? "hop" : "yeast strain") + " name:");
+      closeModal();
+      if (name) onSelect(name);
+    });
+  }, "picker-modal");
+}
+
+// ---- Apply a chosen ingredient (from the picker) to a recipe row/field ----
+// item is either a matched library object, or a plain string for a brand-new custom name.
+function applyFermentableChoice(r, idx, item) {
+  snapshotUndo(r);
+  if (typeof item === "string") {
+    r.fermentables[idx].name = item;
+    state.inventory.fermentables.push(Object.assign(newInventoryItem("fermentables"), { name: item }));
+  } else {
+    Object.assign(r.fermentables[idx], { name: item.name, ppg: item.ppg, color: item.srm, type: item.type, mashable: item.mashable });
+  }
+  saveToStorage(); renderMain(); toast("Set " + (typeof item === "string" ? item : item.name));
+}
+function applyHopChoice(r, idx, item) {
+  snapshotUndo(r);
+  if (typeof item === "string") {
+    r.hops[idx].name = item;
+    state.inventory.hops.push(Object.assign(newInventoryItem("hops"), { name: item }));
+  } else {
+    r.hops[idx].name = item.name; r.hops[idx].alphaPct = item.alpha;
+  }
+  saveToStorage(); renderMain(); toast("Set " + (typeof item === "string" ? item : item.name));
+}
+function applyYeastChoice(r, item) {
+  snapshotUndo(r);
+  if (typeof item === "string") {
+    r.yeast.name = item;
+    state.inventory.yeast.push(Object.assign(newInventoryItem("yeast"), { name: item }));
+  } else {
+    r.yeast.name = item.name; r.yeast.attenuation = item.attenuation; r.yeast.type = item.type;
+  }
+  saveToStorage(); renderMain(); toast("Set " + (typeof item === "string" ? item : item.name));
+}
+function applyStyleChoice(r, item) {
+  r.styleName = item.name;
+  saveToStorage(); renderMain();
 }
 
 function saveItemToLibrary(kind, rowEl, r) {

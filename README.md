@@ -14,17 +14,22 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
   OG/FG/ABV/IBU/colour calculations, per-fermentable **% of grist** and per-hop **IBU
   contribution** (including whirlpool/hop-stand additions, which contribute a real,
   temperature-scaled IBU amount instead of being ignored), and a style-guideline comparison
-  against ~14 built-in styles.
+  against 62 built-in styles, each shown as an explicit min\u2013max range with an optional
+  manual/measured override plotted alongside the calculated estimate.
 - **Cost & batch stats** — total recipe cost, pre-boil volume/gravity, pounds (or kilograms)
   per barrel. **Update Prices** pulls current costs from your Inventory in one click.
-- **Inventory-backed ingredients** — the Fermentables/Hops/Yeast dropdown on every recipe is
-  fed directly from your Inventory, not a fixed built-in list: add an ingredient in Inventory
-  and it shows up in the dropdown; type a brand-new name into a dropdown and it's added to
-  Inventory automatically. **Save Item** and **Substitute** work the same way, reading from
-  and writing to that same list.
-- **World ingredient catalogue, by region** — hops, malts, and yeast strains from New
-  Zealand, Australia, the USA, UK, Germany, Czech Republic, and Slovenia, each tagged with
-  its country of origin. On the Inventory tab, **+ Add Region** pulls in every catalogue item
+- **Inventory-backed ingredients, browsable via a searchable picker** — clicking a
+  Style/Fermentable/Hop/Yeast name opens a searchable, region- or category-grouped picker
+  (rather than a plain dropdown) showing each item's key spec and, for inventory-backed
+  kinds, its current stock level. The picker is fed directly from your Inventory, not a fixed
+  built-in list: add an ingredient in Inventory and it shows up in the picker; type a
+  brand-new name and it's added to Inventory automatically. **Save Item** works the same way,
+  reading from and writing to that same list.
+- **World ingredient catalogue, by region** — hops, malts, and 184 yeast strains across all
+  the major labs (Fermentis, Lallemand, White Labs, Wyeast, Omega, Imperial Yeast, Mangrove
+  Jack's, Escarpment Labs) from New Zealand, Australia, the USA, UK, Germany, France, Canada,
+  Czech Republic, and Slovenia, each tagged with its country of origin. On the Inventory tab,
+  **+ Add Region** pulls in every catalogue item
   for a chosen country you don't already have, and **+ Add All Regions** pulls in the whole
   catalogue at once — both skip anything already tracked by name. A region filter (multiple
   regions at once, e.g. NZ + AU) hides the rest from view without removing anything; your
