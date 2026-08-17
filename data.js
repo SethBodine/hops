@@ -55,6 +55,18 @@ const FERMENTABLES = [
   { name: "Light DME", type: "Extract", ppg: 44, srm: 3, mashable: false, origin: "Generic" },
   { name: "Light LME", type: "Extract", ppg: 36, srm: 3, mashable: false, origin: "Generic" },
   { name: "Amber DME", type: "Extract", ppg: 42, srm: 10, mashable: false, origin: "Generic" },
+  // France
+  { name: "Malteurop French Pilsen Malt", type: "Grain", ppg: 37, srm: 1.8, mashable: true, origin: "France" },
+  { name: "Malteries Soufflet Pale Ale Malt", type: "Grain", ppg: 37, srm: 2.5, mashable: true, origin: "France" },
+  // Belgium
+  { name: "Chateau Pilsen Malt (Castle Malting)", type: "Grain", ppg: 37, srm: 1.8, mashable: true, origin: "Belgium" },
+  { name: "Dingemans Pilsen Malt", type: "Grain", ppg: 37, srm: 1.7, mashable: true, origin: "Belgium" },
+  // Canada
+  { name: "Canada Malting Co. 2-Row Malt", type: "Grain", ppg: 36, srm: 1.75, mashable: true, origin: "Canada" },
+  { name: "Canada Malting Co. White Wheat Malt", type: "Grain", ppg: 38, srm: 3.5, mashable: true, origin: "Canada" },
+  { name: "Canada Malting Co. Century Rye Malt", type: "Grain", ppg: 29, srm: 2.65, mashable: true, origin: "Canada" },
+  // Czech Republic
+  { name: "Weyermann Bohemian Pilsner Malt", type: "Grain", ppg: 37, srm: 2.0, mashable: true, origin: "Czech Republic" },
 ];
 
 const HOPS = [
@@ -104,6 +116,21 @@ const HOPS = [
   { name: "Topaz", alpha: 16.5, origin: "Australia" },
   { name: "Enigma", alpha: 17.5, origin: "Australia" },
   { name: "Summer", alpha: 5.5, origin: "Australia" },
+  // France (Alsace)
+  { name: "Strisselspalt", alpha: 4.0, origin: "France" },
+  { name: "Aramis", alpha: 8.0, origin: "France" },
+  { name: "Triskel", alpha: 7.0, origin: "France" },
+  { name: "Barbe Rouge", alpha: 8.0, origin: "France" },
+  { name: "Elixir", alpha: 6.0, origin: "France" },
+  { name: "Mistral", alpha: 7.0, origin: "France" },
+  { name: "Bouclier", alpha: 4.0, origin: "France" },
+  // Belgium
+  { name: "Coigneau", alpha: 4.0, origin: "Belgium" },
+  { name: "Poperinge", alpha: 4.0, origin: "Belgium" },
+  { name: "Sladek", alpha: 7.0, origin: "Czech Republic" },
+  { name: "Premiant", alpha: 8.5, origin: "Czech Republic" },
+  { name: "Styrian Golding", alpha: 5.0, origin: "Slovenia" },
+  { name: "Styrian Wolf", alpha: 12.0, origin: "Slovenia" },
 ];
 
 const YEASTS = [
@@ -300,6 +327,22 @@ const YEASTS = [
   { name: "Wallonian Farmhouse (Escarpment)", attenuation: 0.85, type: "Saison", origin: "Canada" },
   // NZ homebrew-shop staple (re-packaged Lallemand strain)
   { name: "Nottingham Ale (Lallemand)", attenuation: 0.75, type: "Ale Dry", origin: "New Zealand" },
+  // Bluestone Yeast Co (Melbourne, Australia) - liquid
+  { name: "Bluestone Bergen (Norwegian Farmhouse)", attenuation: 0.80, type: "Kveik", origin: "Australia" },
+  { name: "Bluestone Stuttgart (Lager)", attenuation: 0.74, type: "Lager", origin: "Australia" },
+  { name: "Bluestone Pilsen (Lager)", attenuation: 0.74, type: "Lager", origin: "Australia" },
+  { name: "Bluestone Bohemia (Czech Pilsner)", attenuation: 0.72, type: "Lager", origin: "Australia" },
+  { name: "Bluestone New England (Hazy IPA)", attenuation: 0.76, type: "Ale", origin: "Australia" },
+  { name: "Bluestone Cologne (Kolsch)", attenuation: 0.74, type: "Ale", origin: "Australia" },
+  { name: "Bluestone Bruges (Abbey Ale)", attenuation: 0.78, type: "Belgian Ale", origin: "Australia" },
+  { name: "Bluestone Wallonia (Farmhouse Saison)", attenuation: 0.85, type: "Saison", origin: "Australia" },
+  { name: "Bluestone Liege (Witbier)", attenuation: 0.76, type: "Wheat Ale", origin: "Australia" },
+  { name: "Bluestone Edinburgh (Scottish Ale)", attenuation: 0.70, type: "Ale", origin: "Australia" },
+  { name: "Bluestone San Diego (American Ale)", attenuation: 0.75, type: "Ale", origin: "Australia" },
+  { name: "Bluestone Michigan (American Ale)", attenuation: 0.76, type: "Ale", origin: "Australia" },
+  { name: "Bluestone Dublin (Irish Ale)", attenuation: 0.72, type: "Ale", origin: "Australia" },
+  { name: "Bluestone London (English Ale)", attenuation: 0.72, type: "Ale", origin: "Australia" },
+  { name: "WLP059 Melbourne Ale Yeast", attenuation: 0.75, type: "Ale", origin: "Australia" },
 ];
 
 // All the recognised origin/region values above, in a sensible display order (used to build

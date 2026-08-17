@@ -25,7 +25,7 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
   built-in list: add an ingredient in Inventory and it shows up in the picker; type a
   brand-new name and it's added to Inventory automatically. **Save Item** works the same way,
   reading from and writing to that same list.
-- **World ingredient catalogue, by region** — hops, malts, and 184 yeast strains across all
+- **World ingredient catalogue, by region** — hops, malts, and 199 yeast strains across all
   the major labs (Fermentis, Lallemand, White Labs, Wyeast, Omega, Imperial Yeast, Mangrove
   Jack's, Escarpment Labs) from New Zealand, Australia, the USA, UK, Germany, France, Canada,
   Czech Republic, and Slovenia, each tagged with its country of origin. On the Inventory tab,
@@ -48,8 +48,14 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
 - **Recipe/folder tree** — unlimited nested folders, drag-and-drop to reorganise, right-click
   to clone/rename/delete/move a recipe or folder, folder notes.
 - **Batches** — separate from the recipe itself; track Planning → Brewing → Fermenting →
-  Completed, log actual OG/FG against estimates, and see every batch's history from the
-  recipe's own "Brew History" tab so you can tweak the next version with real data.
+  Completed. Log actual pre-boil gravity/volume, into-fermenter batch size, OG/FG, bottling
+  volume, and see estimated-vs-actual for gravity, ABV, attenuation, mash/brewhouse
+  efficiency, and calories. A fermentation readings log (date/temp/gravity, manual entry or
+  Tilt hydrometer CSV import) draws a gravity/temperature chart over the course of
+  fermentation. A carbonation section computes either keg PSI or bottle priming sugar for the
+  batch's actual measured volume. **Rebrew** starts a fresh batch of the same recipe with one
+  click. Every batch's history shows on the recipe's own "Brew History" tab so you can tweak
+  the next version with real data.
 - **Inventory** — stock tracking (quantity, unit, cost) for fermentables, hops, yeast, and
   misc items, alongside each ingredient's own spec (alpha %, PPG, colour, attenuation), with
   a one-click "deduct from inventory" when you start brewing a batch.

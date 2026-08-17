@@ -193,6 +193,63 @@ const Calc = {
     return fermentables.map(f => ((Number(f.amountLb) || 0) / total) * 100);
   },
 
+  // ---- Batch-day measured stats (fills in BeerSmith's Session-tab parity for the Batches tab) ----
+
+  // Total possible gravity points from a grain bill, at 100% theoretical extraction
+  // (mashable fermentables only - steeping grains contribute nothing extra beyond their PPG,
+  // that's already baked into a lower PPG figure for those, same convention as estimateOG).
+  maxPossiblePoints(fermentables) {
+    return fermentables.reduce((sum, f) => sum + (Number(f.amountLb) || 0) * (Number(f.ppg) || 0), 0);
+  },
+
+  // Efficiency (%) actually achieved, given a measured gravity reading at a known volume -
+  // this is the inverse of estimateOG/estimatePreBoilGravity: given the points you actually
+  // collected (gravity x volume), what fraction of the grain bill's theoretical maximum is that?
+  // Used for both "measured mash efficiency" (pre-boil gravity/volume) and "measured brewhouse
+  // efficiency" (into-fermenter gravity/volume) - same formula, different inputs.
+  measuredEfficiency(fermentables, measuredGravity, measuredVolGal) {
+    const maxPoints = this.maxPossiblePoints(fermentables);
+    if (!maxPoints || !measuredVolGal) return null;
+    const points = (measuredGravity - 1) * 1000 * measuredVolGal;
+    return (points / maxPoints) * 100;
+  },
+
+  // Apparent attenuation (%) from a gravity pair - same formula whether it's the recipe's
+  // estimated OG/FG or a batch's measured readings.
+  attenuationPct(og, fg) {
+    const ogPoints = (og - 1) * 1000;
+    if (!ogPoints) return null;
+    const fgPoints = (fg - 1) * 1000;
+    return ((ogPoints - fgPoints) / ogPoints) * 100;
+  },
+
+  // Calories per 12oz serving, from OG/FG (the standard homebrew formula - real-extract based,
+  // as used across most brewing calculators/software).
+  estimateCalories(og, fg) {
+    const alcCal = 1881.22 * fg * (og - fg) / (1.775 - og);
+    const carbCal = 3550.0 * fg * ((0.1808 * og) + (0.8192 * fg) - 1.0004);
+    return Math.max(0, alcCal + carbCal);
+  },
+
+  // Corn sugar (dextrose) needed, in grams, for bottle priming to a target CO2 volumes at a
+  // given beer temperature (residual CO2 already in solution is netted out first). Same formula
+  // used by the standalone Priming Sugar tool, factored out here so batch-level carbonation can
+  // share it.
+  primingSugarGrams(volGal, tempF, targetVols) {
+    const residual = 3.0378 - 0.050062 * tempF + 0.00026555 * tempF * tempF;
+    const diff = Math.max(0, targetVols - residual);
+    return 4 * this.galToLHelper(volGal) * diff;
+  },
+  galToLHelper(volGal) { return volGal * 3.785411784; },
+
+  // Keg pressure (PSI) needed to reach a target CO2 volumes at a given beer temperature -
+  // a widely-published quadratic regression fit to Henry's-law CO2 solubility data (the same
+  // general-purpose formula used across most brewing calculators, not tool-specific).
+  kegCarbPSI(tempF, targetVols) {
+    const T = tempF, V = targetVols;
+    return -16.6999 - 0.0101059 * T + 0.00116512 * T * T + 0.173354 * T * V + 4.24267 * V - 0.0684226 * V * V;
+  },
+
   // ---- Sanity checks: flag values that are physically implausible or likely a typo,
   // without being prescriptive about what "correct" looks like. Each returns a short,
   // friendly message rather than a technical one.

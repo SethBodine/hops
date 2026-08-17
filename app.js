@@ -67,7 +67,27 @@ function newEquipment(preset) {
 }
 function newBatch(recipeId) {
   const r = state.recipes.find(x => x.id === recipeId);
-  return { id: uid(), recipeId, recipeName: r ? r.name : "Unknown Recipe", status: "Planning", brewDate: new Date().toISOString().slice(0, 10), measuredOG: null, measuredFG: null, notes: "" };
+  return {
+    id: uid(), recipeId, recipeName: r ? r.name : "Unknown Recipe", status: "Planning", brewDate: new Date().toISOString().slice(0, 10), measuredOG: null, measuredFG: null, notes: "",
+    // Measured brew-day stats (canonical units: gal, SG, F - same convention as recipes)
+    measuredPreBoilGravity: null, measuredPreBoilVolGal: null,
+    measuredBatchSizeGal: null, // "into fermenter" - used for measured brewhouse efficiency
+    measuredBottlingVolGal: null,
+    carbMethod: "Keg", carbTargetVols: null, carbTempF: null, // null carbTargetVols/TempF = fall back to the recipe's own carbonation card
+    fermentationReadings: [], // [{ id, date, tempF, gravity, notes }] - date is an ISO date string, sorted by date on render
+  };
+}
+// Backfill fields for batches saved before the measured-stats/fermentation-log feature existed.
+function migrateBatch(b) {
+  if (b.measuredPreBoilGravity === undefined) b.measuredPreBoilGravity = null;
+  if (b.measuredPreBoilVolGal === undefined) b.measuredPreBoilVolGal = null;
+  if (b.measuredBatchSizeGal === undefined) b.measuredBatchSizeGal = null;
+  if (b.measuredBottlingVolGal === undefined) b.measuredBottlingVolGal = null;
+  if (b.carbMethod === undefined) b.carbMethod = "Keg";
+  if (b.carbTargetVols === undefined) b.carbTargetVols = null;
+  if (b.carbTempF === undefined) b.carbTempF = null;
+  if (!Array.isArray(b.fermentationReadings)) b.fermentationReadings = [];
+  return b;
 }
 // Adds every catalogue entry for `kind` matching `region` (or every entry, if region === "__all__")
 // into the inventory list, skipping names already present. Returns how many were added.
@@ -411,6 +431,7 @@ function promptImportBackup(parsed) {
         if (!confirm("This replaces every recipe, batch, folder, inventory item, and equipment profile currently stored in this browser with the contents of the backup file. This can't be undone. Continue?")) return;
         const restored = Security.sanitizeDeep(parsed);
         (restored.recipes || []).forEach(migrateRecipe);
+        (restored.batches || []).forEach(migrateBatch);
         if (!restored.tree) { restored.tree = Tree.createRoot(); (restored.recipes || []).forEach(r => restored.tree.children.push(Tree.createLeaf(r.id))); }
         Tree.pruneOrphans(restored.tree, new Set((restored.recipes || []).map(r => r.id)));
         Object.keys(state).forEach(k => delete state[k]);
@@ -571,7 +592,7 @@ function handleIncomingRecipeShare(incoming) {
 }
 
 function handleIncomingBatchShare(data) {
-  const incomingBatch = data.batch;
+  const incomingBatch = migrateBatch(data.batch);
   const incomingRecipe = data.recipe ? migrateRecipe(data.recipe) : null;
   const existingBatch = state.batches.find(x => x.id === incomingBatch.id);
   const haveRecipe = state.recipes.some(x => x.id === incomingBatch.recipeId);
@@ -1463,8 +1484,31 @@ function renderBatchesMain(main) {
   const statuses = ["Planning", "Brewing", "Fermenting", "Completed"];
   const statusBtns = statuses.map(s => '<button class="btn ' + (b.status === s ? "btn-primary" : "") + '" data-status="' + s + '" style="flex:1; min-width:100px;">' + s + '</button>').join("");
   const recipeOptions = state.recipes.map(rc => '<option value="' + rc.id + '" ' + (rc.id === b.recipeId ? "selected" : "") + '>' + escapeHtml(rc.name) + '</option>').join("");
+
+  const ageDays = Math.max(0, Math.round((Date.now() - new Date(b.brewDate + "T00:00:00").getTime()) / 86400000));
+  const ageBadge = '<span class="batch-age-badge" title="Days since brew date">' + ageDays + ' day' + (ageDays === 1 ? "" : "s") + ' old</span>';
+
+  // ---- Mash efficiency (from measured pre-boil gravity/volume) ----
+  const ferms = r ? r.fermentables.map(f => ({ amountLb: Number(f.amountLb) || 0, ppg: Number(f.ppg) || 0 })) : [];
+  const measMashEff = r && b.measuredPreBoilGravity && b.measuredPreBoilVolGal ? Calc.measuredEfficiency(ferms, Number(b.measuredPreBoilGravity), Number(b.measuredPreBoilVolGal)) : null;
+
+  // ---- Brewhouse efficiency / attenuation / calories (from measured OG/FG/batch size) ----
+  const measBhEff = r && b.measuredOG && b.measuredBatchSizeGal ? Calc.measuredEfficiency(ferms, Number(b.measuredOG), Number(b.measuredBatchSizeGal)) : null;
+  const estAttenuation = d ? Calc.attenuationPct(d.og, d.fg) : null;
+  const measAttenuation = b.measuredOG && b.measuredFG ? Calc.attenuationPct(Number(b.measuredOG), Number(b.measuredFG)) : null;
+  const estCalories = d ? Calc.estimateCalories(d.og, d.fg) : null;
+  const measCalories = b.measuredOG && b.measuredFG ? Calc.estimateCalories(Number(b.measuredOG), Number(b.measuredFG)) : null;
+
+  // ---- Bottling/kegging carbonation (falls back to the recipe's own carb card if not overridden) ----
+  const carbTargetVols = b.carbTargetVols != null ? Number(b.carbTargetVols) : (r ? Number(r.carbLevelVols) : 2.4);
+  const carbTempF = b.carbTempF != null ? Number(b.carbTempF) : 68;
+  const carbBatchGal = b.measuredBottlingVolGal != null ? Number(b.measuredBottlingVolGal) : (r ? Number(r.batchVolGal) : null);
+  const carbOutput = carbBatchGal ? (b.carbMethod === "Bottle"
+    ? Calc.primingSugarGrams(carbBatchGal, carbTempF, carbTargetVols).toFixed(0) + " g corn sugar (" + (Calc.primingSugarGrams(carbBatchGal, carbTempF, carbTargetVols) / 28.3495).toFixed(2) + " oz)"
+    : Calc.kegCarbPSI(carbTempF, carbTargetVols).toFixed(1) + " PSI") : "\u2014";
+
   main.innerHTML =
-    '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">' + escapeHtml(b.recipeName) + '</h1><div class="header-actions"><button class="btn btn-sm" id="shareBatchBtn">Share</button><button class="btn btn-sm btn-danger" id="deleteBatchBtn">Delete Batch</button></div></div>' +
+    '<div class="recipe-header"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><h1 class="display" style="margin:0;font-size:28px;">' + escapeHtml(b.recipeName) + '</h1>' + ageBadge + '</div><div class="header-actions"><button class="btn btn-sm" id="rebrewBtn" title="Start a fresh batch of the same recipe">Rebrew</button><button class="btn btn-sm" id="shareBatchBtn">Share</button><button class="btn btn-sm btn-danger" id="deleteBatchBtn">Delete Batch</button></div></div>' +
     '<div class="card"><h3>Status</h3><div style="display:flex; gap:8px; flex-wrap:wrap;">' + statusBtns + '</div></div>' +
     '<div class="card"><h3>Brew Day</h3><div class="field-grid">' +
     '<div class="field"><label>Recipe</label><select id="batchRecipeSelect">' + recipeOptions + '</select></div>' +
@@ -1472,10 +1516,22 @@ function renderBatchesMain(main) {
     '<div class="field"><label>Measured OG</label><input type="number" step="0.001" data-bfield="measuredOG" value="' + (b.measuredOG != null ? b.measuredOG : "") + '" placeholder="' + (d ? d.og.toFixed(3) : "1.050") + '"/></div>' +
     '<div class="field"><label>Measured FG</label><input type="number" step="0.001" data-bfield="measuredFG" value="' + (b.measuredFG != null ? b.measuredFG : "") + '" placeholder="' + (d ? d.fg.toFixed(3) : "1.010") + '"/></div>' +
     '</div></div>' +
-    (d ? '<div class="card"><h3>Estimated vs. Actual</h3>' +
+    (d ? '<div class="card"><h3>Mash &amp; Pre-Boil</h3><div class="field-grid">' +
+      '<div class="field"><label>Measured Pre-Boil Gravity</label><input type="number" step="0.001" data-bfield="measuredPreBoilGravity" value="' + (b.measuredPreBoilGravity != null ? b.measuredPreBoilGravity : "") + '" placeholder="' + d.preBoilGravity.toFixed(3) + '"/></div>' +
+      '<div class="field"><label>Measured Pre-Boil Volume (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-bfield="measuredPreBoilVolGal" data-unitkind="volume-gal" value="' + (b.measuredPreBoilVolGal != null ? uVal(b.measuredPreBoilVolGal, "volume-gal") : "") + '" placeholder="' + uVal(d.preBoilVolGal, "volume-gal").toFixed(1) + '"/></div>' +
+      '</div>' +
+      batchCompareRow("Pre-Boil Gravity", d.preBoilGravity.toFixed(3), b.measuredPreBoilGravity ? Number(b.measuredPreBoilGravity).toFixed(3) : null) +
+      batchCompareRow("Mash Efficiency", (Number(r.efficiencyPct) || 0).toFixed(1) + "%", measMashEff != null ? measMashEff.toFixed(1) + "%" : null) +
+      '</div>' : "") +
+    (d ? '<div class="card"><h3>Into Fermenter &amp; Efficiency</h3><div class="field-grid">' +
+      '<div class="field"><label>Measured Batch Size (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-bfield="measuredBatchSizeGal" data-unitkind="volume-gal" value="' + (b.measuredBatchSizeGal != null ? uVal(b.measuredBatchSizeGal, "volume-gal") : "") + '" placeholder="' + uVal(r.batchVolGal, "volume-gal").toFixed(1) + '"/></div>' +
+      '</div>' +
       batchCompareRow("Original Gravity", d.og.toFixed(3), b.measuredOG ? Number(b.measuredOG).toFixed(3) : null) +
       batchCompareRow("Final Gravity", d.fg.toFixed(3), b.measuredFG ? Number(b.measuredFG).toFixed(3) : null) +
       (b.measuredOG && b.measuredFG ? batchCompareRow("ABV", d.abv.toFixed(1) + "%", Calc.estimateABV(Number(b.measuredOG), Number(b.measuredFG)).toFixed(1) + "%") : "") +
+      (estAttenuation != null ? batchCompareRow("Attenuation", estAttenuation.toFixed(1) + "%", measAttenuation != null ? measAttenuation.toFixed(1) + "%" : null) : "") +
+      batchCompareRow("Brewhouse Efficiency", (Number(r.efficiencyPct) || 0).toFixed(1) + "%", measBhEff != null ? measBhEff.toFixed(1) + "%" : null) +
+      (estCalories != null ? batchCompareRow("Calories (per 12oz)", estCalories.toFixed(0) + " kcal", measCalories != null ? measCalories.toFixed(0) + " kcal" : null) : "") +
       '</div>' : "") +
     '<div class="card"><h3>Ingredients Needed <button class="btn btn-sm" id="deductInventoryBtn">Deduct from Inventory</button></h3>' +
     (r ? '<table class="ing-table"><tbody>' +
@@ -1483,10 +1539,31 @@ function renderBatchesMain(main) {
       r.hops.map(h => '<tr><td>' + escapeHtml(h.name) + '</td><td class="num">' + uVal(h.amountOz, "weight-oz").toFixed(2) + ' ' + uLabel("weight-oz") + '</td></tr>').join("") +
       '<tr><td>' + escapeHtml(r.yeast.name) + '</td><td class="num">1 pkg</td></tr></tbody></table>' : '<p style="color:var(--ink-faint);">Original recipe was deleted.</p>') +
     '</div>' +
+    '<div class="card"><h3>Fermentation Readings <span><button class="btn btn-sm" id="importTiltBtn">Import CSV</button> <button class="btn btn-sm" id="addReadingBtn">+ Add Reading</button></span></h3>' +
+    '<input type="file" id="tiltFileInput" accept=".csv,text/csv" style="display:none;"/>' +
+    fermentationChartSvg(b.fermentationReadings) +
+    (b.fermentationReadings.length ? '<table class="ing-table ferm-readings-table"><thead><tr><th>Date</th><th>Temp (' + uLabel("temp-f") + ')</th><th>Gravity</th><th>Notes</th><th></th></tr></thead><tbody>' +
+      [...b.fermentationReadings].sort((x, y) => (x.date || "").localeCompare(y.date || "")).map(fr =>
+        '<tr data-reading-id="' + fr.id + '">' +
+        '<td><input type="date" data-rfield="date" value="' + (fr.date || "") + '"/></td>' +
+        '<td><input type="number" step="1" data-rfield="tempF" data-unitkind="temp-f" value="' + (fr.tempF != null ? uVal(fr.tempF, "temp-f") : "") + '"/></td>' +
+        '<td><input type="number" step="0.001" data-rfield="gravity" value="' + (fr.gravity != null ? fr.gravity : "") + '"/></td>' +
+        '<td><input type="text" data-rfield="notes" value="' + escapeHtml(fr.notes || "") + '" placeholder="e.g. krausen dropped"/></td>' +
+        '<td><button class="del-btn" data-del-reading="' + fr.id + '">\u2715</button></td></tr>'
+      ).join("") + '</tbody></table>' : '<p style="color:var(--ink-faint);font-size:13px;">No readings yet \u2014 add one manually or import a Tilt hydrometer CSV export.</p>') +
+    '</div>' +
+    '<div class="card"><h3>Bottling / Kegging</h3><div class="field-grid">' +
+    '<div class="field"><label>Measured Bottling/Kegging Volume (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-bfield="measuredBottlingVolGal" data-unitkind="volume-gal" value="' + (b.measuredBottlingVolGal != null ? uVal(b.measuredBottlingVolGal, "volume-gal") : "") + '" placeholder="' + (r ? uVal(r.batchVolGal, "volume-gal").toFixed(1) : "") + '"/></div>' +
+    '<div class="field"><label>Method</label><select data-bfield="carbMethod"><option ' + (b.carbMethod === "Keg" ? "selected" : "") + '>Keg</option><option ' + (b.carbMethod === "Bottle" ? "selected" : "") + '>Bottle</option></select></div>' +
+    '<div class="field"><label>Target Volumes CO2</label><input type="number" step="0.1" data-bfield="carbTargetVols" value="' + (b.carbTargetVols != null ? b.carbTargetVols : "") + '" placeholder="' + carbTargetVols.toFixed(1) + '"/></div>' +
+    '<div class="field"><label>Beer Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" data-bfield="carbTempF" data-unitkind="temp-f" value="' + (b.carbTempF != null ? uVal(b.carbTempF, "temp-f") : "") + '" placeholder="' + uVal(carbTempF, "temp-f").toFixed(0) + '"/></div>' +
+    '</div><div class="stat-row" style="margin-top:8px;"><span class="stat-label">' + (b.carbMethod === "Bottle" ? "Priming Sugar Needed" : "Keg Pressure Needed") + '</span><span class="stat-value">' + carbOutput + '</span></div>' +
+    '</div>' +
     '<div class="card"><h3>Batch Notes</h3><textarea class="notes-area" id="batchNotes" placeholder="Brew day observations, gravity readings, off-flavours, timing...">' + escapeHtml(b.notes) + '</textarea></div>';
 
   main.querySelectorAll("[data-status]").forEach(btn => btn.addEventListener("click", () => { b.status = btn.dataset.status; saveToStorage(); renderAll(); }));
   document.getElementById("shareBatchBtn").addEventListener("click", () => shareBatch(b));
+  document.getElementById("rebrewBtn").addEventListener("click", () => rebrewBatch(b));
   document.getElementById("deleteBatchBtn").addEventListener("click", () => {
     if (!confirm("Delete this batch record?")) return;
     state.batches = state.batches.filter(x => x.id !== b.id);
@@ -1499,13 +1576,53 @@ function renderBatchesMain(main) {
     b.recipeName = found ? found.name : "Unknown Recipe";
     saveToStorage(); renderAll();
   });
-  main.querySelectorAll("[data-bfield]").forEach(el => el.addEventListener("input", () => {
-    const val = el.type === "number" ? (el.value === "" ? null : Number(el.value)) : el.value;
+  // "change" (fires on blur/Enter), not "input" - these trigger a full renderMain() to refresh
+  // the estimated-vs-actual/efficiency numbers elsewhere on the tab, and "input" would rebuild
+  // the field out from under the user's cursor after every keystroke (same fix as the Style
+  // Guide override inputs).
+  main.querySelectorAll("[data-bfield]").forEach(el => el.addEventListener("change", () => {
+    let val = el.type === "number" ? (el.value === "" ? null : Number(el.value)) : el.value;
+    if (val != null && el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
     b[el.dataset.bfield] = val; saveToStorage();
-    if (el.dataset.bfield !== "brewDate") renderMain(); else renderSidebar();
+    if (el.dataset.bfield !== "brewDate" && el.dataset.bfield !== "notes") renderMain(); else renderSidebar();
   }));
   document.getElementById("batchNotes").addEventListener("input", e => { b.notes = e.target.value; saveToStorage(); });
   document.getElementById("deductInventoryBtn").addEventListener("click", () => deductInventoryForBatch(r));
+
+  // ---- Fermentation readings: add/edit/delete + CSV import ----
+  document.getElementById("addReadingBtn").addEventListener("click", () => {
+    b.fermentationReadings.push({ id: uid(), date: new Date().toISOString().slice(0, 10), tempF: null, gravity: null, notes: "" });
+    saveToStorage(); renderMain();
+  });
+  main.querySelectorAll("[data-del-reading]").forEach(btn => btn.addEventListener("click", () => {
+    b.fermentationReadings = b.fermentationReadings.filter(fr => fr.id !== btn.dataset.delReading);
+    saveToStorage(); renderMain();
+  }));
+  main.querySelectorAll("[data-reading-id]").forEach(row => {
+    const fr = b.fermentationReadings.find(x => x.id === row.dataset.readingId);
+    row.querySelectorAll("[data-rfield]").forEach(el => el.addEventListener("change", () => {
+      let val = el.type === "number" ? (el.value === "" ? null : Number(el.value)) : el.value;
+      if (val != null && el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
+      fr[el.dataset.rfield] = val;
+      saveToStorage(); renderMain();
+    }));
+  });
+  const tiltInput = document.getElementById("tiltFileInput");
+  document.getElementById("importTiltBtn").addEventListener("click", () => tiltInput.click());
+  tiltInput.addEventListener("change", () => {
+    const file = tiltInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rows = parseTiltCsv(String(reader.result));
+      if (!rows.length) { toast("No readings found in that CSV"); return; }
+      b.fermentationReadings.push(...rows);
+      saveToStorage(); renderMain();
+      toast("Imported " + rows.length + " reading(s)");
+    };
+    reader.readAsText(file);
+    tiltInput.value = "";
+  });
 }
 function batchCompareRow(label, est, actual) { return '<div class="stat-row"><span class="stat-label">' + label + '</span><span class="stat-value">' + est + ' est' + (actual ? ' \u2192 ' + actual + ' actual' : "") + '</span></div>'; }
 function deductInventoryForBatch(r) {
@@ -1519,6 +1636,83 @@ function deductInventoryForBatch(r) {
   toast(deducted ? "Deducted " + deducted + " item(s) from inventory" : "No matching inventory items found");
 }
 function handleNewBatch() { const r = state.recipes[0]; const b = newBatch(r.id); state.batches.push(b); state.activeBatchId = b.id; saveToStorage(); renderAll(); toast("New batch started"); }
+// Start a new, blank batch of the same recipe (BeerSmith 4's "New Session" idea, scoped down to
+// this app's simpler model: batches already ARE the brew-log entries, so "rebrewing" is just
+// starting a fresh one against the same recipe and switching to it - nothing about the old
+// batch record changes).
+function rebrewBatch(b) {
+  const nb = newBatch(b.recipeId);
+  state.batches.push(nb);
+  state.activeBatchId = nb.id;
+  saveToStorage(); renderAll();
+  toast("Started a new batch of " + nb.recipeName);
+}
+// Lightweight inline SVG line chart of gravity (solid) and temperature (dashed) over the
+// readings' dates. Deliberately simple - index-spaced x-axis (not true time-scale), min/max
+// labels only - this is a brew-day glance, not a data-analysis tool.
+function fermentationChartSvg(readings) {
+  const sorted = [...readings].filter(fr => fr.gravity != null || fr.tempF != null).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  if (sorted.length < 2) return "";
+  const W = 100, H = 34, padX = 3, padY = 4; // viewBox units - scales via CSS width
+  const gravities = sorted.map(fr => fr.gravity).filter(v => v != null);
+  const temps = sorted.map(fr => fr.tempF).filter(v => v != null);
+  const gMin = gravities.length ? Math.min(...gravities) : 1, gMax = gravities.length ? Math.max(...gravities) : 1.06;
+  const tMin = temps.length ? Math.min(...temps) : 60, tMax = temps.length ? Math.max(...temps) : 75;
+  const gSpan = Math.max(0.001, gMax - gMin), tSpan = Math.max(1, tMax - tMin);
+  const x = i => padX + (i / (sorted.length - 1)) * (W - padX * 2);
+  const yG = v => H - padY - ((v - gMin) / gSpan) * (H - padY * 2);
+  const yT = v => H - padY - ((v - tMin) / tSpan) * (H - padY * 2);
+  const pathFor = (getVal, getY) => {
+    let d = "", drawing = false;
+    sorted.forEach((fr, i) => {
+      const v = getVal(fr);
+      if (v == null) { drawing = false; return; }
+      d += (drawing ? "L" : "M") + x(i).toFixed(2) + "," + getY(v).toFixed(2) + " ";
+      drawing = true;
+    });
+    return d.trim();
+  };
+  const gravityPath = gravities.length ? pathFor(fr => fr.gravity, yG) : "";
+  const tempPath = temps.length ? pathFor(fr => fr.tempF, yT) : "";
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="ferm-chart" preserveAspectRatio="none">' +
+    (gravityPath ? '<path d="' + gravityPath + '" class="ferm-chart-gravity"/>' : "") +
+    (tempPath ? '<path d="' + tempPath + '" class="ferm-chart-temp"/>' : "") +
+    '</svg>' +
+    '<div class="ferm-chart-legend"><span class="legend-gravity">\u2500 Gravity (' + gMin.toFixed(3) + '\u2013' + gMax.toFixed(3) + ')</span>' +
+    (temps.length ? '<span class="legend-temp">- - Temp (' + uVal(tMin, "temp-f").toFixed(0) + '\u2013' + uVal(tMax, "temp-f").toFixed(0) + ' ' + uLabel("temp-f") + ')</span>' : "") + '</div>';
+}
+// Flexible CSV parser for Tilt hydrometer exports (Tilt Pi, or the Tilt Google Sheet template) -
+// column names vary between export sources, so this matches by substring rather than an exact
+// header, and simply skips any row it can't make sense of rather than failing the whole import.
+function parseTiltCsv(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return [];
+  const header = lines[0].split(",").map(h => h.trim().toLowerCase().replace(/"/g, ""));
+  const findCol = candidates => header.findIndex(h => candidates.some(c => h.includes(c)));
+  const dateIdx = findCol(["timepoint", "timestamp", "date", "time"]);
+  const tempIdx = findCol(["temp"]);
+  const gravIdx = findCol(["sg", "gravity"]);
+  const notesIdx = findCol(["comment", "note"]);
+  if (dateIdx === -1 || (tempIdx === -1 && gravIdx === -1)) return [];
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",").map(c => c.trim().replace(/^"|"$/g, ""));
+    const rawDate = cols[dateIdx];
+    const parsed = rawDate ? Date.parse(rawDate) : NaN;
+    if (isNaN(parsed)) continue;
+    const tempF = tempIdx !== -1 ? Number(cols[tempIdx]) : null;
+    const gravity = gravIdx !== -1 ? Number(cols[gravIdx]) : null;
+    if ((tempF == null || isNaN(tempF)) && (gravity == null || isNaN(gravity) || !gravity)) continue;
+    out.push({
+      id: uid(),
+      date: new Date(parsed).toISOString().slice(0, 10),
+      tempF: tempF != null && !isNaN(tempF) ? tempF : null,
+      gravity: gravity != null && !isNaN(gravity) && gravity ? (gravity > 100 ? gravity / 1000 : gravity) : null, // some exports use "1050" instead of "1.050"
+      notes: notesIdx !== -1 ? (cols[notesIdx] || "") : "",
+    });
+  }
+  return out;
+}
 
 // ================= INVENTORY =================
 const INVENTORY_KINDS = [["fermentables", "Fermentables"], ["hops", "Hops"], ["yeast", "Yeast"], ["misc", "Misc / Fining"]];
@@ -1678,9 +1872,7 @@ function renderToolsMain(main) {
     const volGal = Units.toCanonical(Number(document.getElementById("calcPrimeVol").value), "volume-gal", state.unitSystem);
     const tempF = Units.toCanonical(Number(document.getElementById("calcPrimeTemp").value), "temp-f", state.unitSystem);
     const target = Number(document.getElementById("calcPrimeTarget").value);
-    const residual = 3.0378 - 0.050062 * tempF + 0.00026555 * tempF * tempF;
-    const diff = Math.max(0, target - residual);
-    const grams = 4 * Units.galToL(volGal) * diff;
+    const grams = Calc.primingSugarGrams(volGal, tempF, target);
     primeOut.textContent = grams.toFixed(0) + " g (" + (grams / 28.3495).toFixed(2) + " oz)";
   };
   ["calcPrimeVol", "calcPrimeTemp", "calcPrimeTarget"].forEach(id => document.getElementById(id).addEventListener("input", updatePrime)); updatePrime();
@@ -1715,6 +1907,7 @@ function init() {
   if (!state.region) state.region = "New Zealand";
   if (!Array.isArray(state.inventoryRegionFilter)) state.inventoryRegionFilter = ["New Zealand", "Australia", "Custom"];
   state.recipes.forEach(migrateRecipe);
+  state.batches.forEach(migrateBatch);
   migrateInventoryModel();
   fixCustomRegionVisibility();
   state.equipment.forEach(e => { if (e.tempAdjustF == null) e.tempAdjustF = 2; });
@@ -1783,6 +1976,7 @@ async function handleOpenWorkingFile() {
     }
     const restored = Security.sanitizeDeep(data);
     (restored.recipes || []).forEach(migrateRecipe);
+    (restored.batches || []).forEach(migrateBatch);
     if (!restored.tree) { restored.tree = Tree.createRoot(); (restored.recipes || []).forEach(r => restored.tree.children.push(Tree.createLeaf(r.id))); }
     Tree.pruneOrphans(restored.tree, new Set((restored.recipes || []).map(r => r.id)));
     Object.keys(state).forEach(k => delete state[k]);

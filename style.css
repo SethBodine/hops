@@ -330,6 +330,38 @@ button {
 
 .header-actions { display: flex; gap: 8px; flex-shrink: 0; padding-top: 6px; }
 
+.batch-age-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-dim);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 4px 11px;
+  white-space: nowrap;
+}
+
+/* ---- Fermentation readings chart (Batches tab) ---- */
+.ferm-chart {
+  width: 100%;
+  height: 110px;
+  display: block;
+  margin: 4px 0 2px;
+}
+.ferm-chart-gravity { fill: none; stroke: var(--amber); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.ferm-chart-temp { fill: none; stroke: var(--ink-faint); stroke-width: 1.1; stroke-dasharray: 2 1.5; vector-effect: non-scaling-stroke; }
+.ferm-chart-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 10px;
+}
+.ferm-chart-legend .legend-gravity { color: var(--amber); }
+.ferm-readings-table input[type="text"] { min-width: 120px; }
+
 /* ---- Gauge strip (signature element) ---- */
 .gauge-strip {
   display: grid;
