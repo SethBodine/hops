@@ -14,8 +14,15 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
   OG/FG/ABV/IBU/colour calculations, per-fermentable **% of grist** and per-hop **IBU
   contribution** (including whirlpool/hop-stand additions, which contribute a real,
   temperature-scaled IBU amount instead of being ignored), and a style-guideline comparison
-  against 62 built-in styles, each shown as an explicit min\u2013max range with an optional
+  against 62 built-in styles, each shown as an explicit min–max range with an optional
   manual/measured override plotted alongside the calculated estimate.
+- **Run Checks** — an on-demand recipe-readiness report (top of every recipe): flags missing
+  ingredients, a hop schedule with no bittering addition, mashable grain with no mash steps,
+  dry hop additions missing a schedule, unlinked equipment profile, style-range misses, and
+  folds in the same physical-implausibility checks as the always-on warning banner — one place
+  to review before brew day, rather than hunting across tabs.
+- **Dry hop scheduling** — each Dry Hop addition has its own start day (days into fermentation)
+  and duration (days before removal/packaging), not just an amount.
 - **Cost & batch stats** — total recipe cost, pre-boil volume/gravity, pounds (or kilograms)
   per barrel. **Update Prices** pulls current costs from your Inventory in one click.
 - **Inventory-backed ingredients, browsable via a searchable picker** — clicking a

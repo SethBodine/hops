@@ -198,7 +198,7 @@ function migrateRecipe(r) {
   if (r.preBoilVolGal === undefined) r.preBoilVolGal = null;
   if (!r.styleOverride) r.styleOverride = { og: null, fg: null, ibu: null, srm: null, abv: null };
   (r.waterSalts || []).forEach(s => { if (!s.use) s.use = "Mash"; });
-  (r.hops || []).forEach(h => { if (h.whirlpoolTempF == null) h.whirlpoolTempF = 194; });
+  (r.hops || []).forEach(h => { if (h.whirlpoolTempF == null) h.whirlpoolTempF = 194; if (h.dryHopDay === undefined) h.dryHopDay = null; if (h.dryHopDurationDays === undefined) h.dryHopDurationDays = null; });
   return r;
 }
 
@@ -822,6 +822,7 @@ function renderRecipesMain(main) {
   main.innerHTML =
     '<div class="recipe-header"><input class="recipe-title-input" id="recipeName" value="' + escapeHtml(r.name) + '" />' +
     '<div class="header-actions">' +
+    '<button class="btn btn-sm" id="runChecksBtn">Run Checks</button>' +
     '<button class="btn btn-sm" id="shareBtn">Share</button>' +
     '<button class="btn btn-sm" id="scaleBtn">Scale</button>' +
     '<button class="btn btn-sm" id="updatePricesBtn">Update Prices</button>' +
@@ -844,6 +845,7 @@ function renderRecipesMain(main) {
     if (deduped !== r.name) { r.name = deduped; e.target.value = deduped; toast('Renamed to "' + deduped + '" to avoid a duplicate name'); }
     saveToStorage(); renderSidebar();
   });
+  document.getElementById("runChecksBtn").addEventListener("click", () => runRecipeChecks(r, d, style));
   document.getElementById("shareBtn").addEventListener("click", () => shareRecipe(r));
   document.getElementById("scaleBtn").addEventListener("click", () => scaleRecipe(r));
   document.getElementById("updatePricesBtn").addEventListener("click", () => updatePricesFromInventory(r));
@@ -910,6 +912,27 @@ function renderSanityBanner(d, r) {
     '</div>';
 }
 
+// "Run Checks" (BeerSmith 4's on-demand recipe-readiness button): opens a report modal rather
+// than a passive banner, since it's a deliberate "am I ready to brew this" action, not something
+// that should interrupt every render the way the sanity banner does.
+function runRecipeChecks(r, d, style) {
+  const checks = Calc.recipeChecks(d, r, style);
+  const icon = { error: "\u26d4", warning: "\u26a0\ufe0f", info: "\u2139\ufe0f" };
+  const bySeverity = { error: [], warning: [], info: [] };
+  checks.forEach(c => bySeverity[c.severity].push(c.message));
+  const section = (severity, label) => bySeverity[severity].length
+    ? '<div class="check-group check-' + severity + '"><h4>' + icon[severity] + ' ' + label + ' (' + bySeverity[severity].length + ')</h4><ul>' +
+      bySeverity[severity].map(m => '<li>' + escapeHtml(m) + '</li>').join("") + '</ul></div>'
+    : "";
+  const html = '<h3>Run Checks: \u201c' + escapeHtml(r.name) + '\u201d</h3>' +
+    (checks.length === 0
+      ? '<p style="color:var(--ink-dim);">\u2705 No issues found \u2014 this recipe looks ready to brew.</p>'
+      : '<p style="color:var(--ink-faint);font-size:13px;">' + checks.length + ' item' + (checks.length > 1 ? "s" : "") + ' worth a look before brew day:</p>' +
+        section("error", "Needs fixing") + section("warning", "Worth checking") + section("info", "For your information")) +
+    '<div style="margin-top:14px;"><button class="btn btn-primary" id="closeChecksBtn" style="width:100%;">Close</button></div>';
+  showModal(html, overlay => { overlay.querySelector("#closeChecksBtn").addEventListener("click", closeModal); });
+}
+
 function renderTabPanel(r, d, style) {
   const panel = document.getElementById("tabPanel");
   if (state.activeTab === "design") panel.innerHTML = designTabHtml(r, style);
@@ -948,10 +971,12 @@ function designTabHtml(r, style) {
     '<td><input type="number" step="1" data-tbl="hops" data-field="timeMin" value="' + h.timeMin + '"/></td>' +
     '<td><select data-tbl="hops" data-field="use">' + ["Boil", "Whirlpool", "Dry Hop"].map(u => '<option ' + (h.use === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
     '<td>' + (h.use === "Whirlpool" ? '<input type="number" step="1" data-tbl="hops" data-field="whirlpoolTempF" data-unitkind="temp-f" value="' + uVal(h.whirlpoolTempF != null ? h.whirlpoolTempF : 194, "temp-f") + '" title="Whirlpool/stand temperature - the single biggest factor in how much IBU a whirlpool addition contributes"/>' : '<span style="color:var(--ink-faint);">\u2014</span>') + '</td>' +
+    '<td>' + (h.use === "Dry Hop" ? '<input type="number" step="1" min="0" data-tbl="hops" data-field="dryHopDay" value="' + (h.dryHopDay != null ? h.dryHopDay : "") + '" placeholder="day #" title="Day into fermentation this addition goes in"/>' : '<span style="color:var(--ink-faint);">\u2014</span>') + '</td>' +
+    '<td>' + (h.use === "Dry Hop" ? '<input type="number" step="1" min="0" data-tbl="hops" data-field="dryHopDurationDays" value="' + (h.dryHopDurationDays != null ? h.dryHopDurationDays : "") + '" placeholder="days" title="How many days this addition stays in before packaging/removal"/>' : '<span style="color:var(--ink-faint);">\u2014</span>') + '</td>' +
     '<td class="num hop-ibu">' + (d.ibuBreakdown[i] || 0).toFixed(1) + '</td>' +
     '<td><input type="number" step="0.01" data-tbl="hops" data-field="cost" value="' + (h.cost || 0) + '"/></td>' +
     '<td class="row-actions"><button class="btn btn-sm" data-save-item="hops">Save</button><button class="del-btn" data-del="hops">\u2715</button></td></tr>'
-  ).join("") : '<tr class="empty-row"><td colspan="9">No hops yet</td></tr>';
+  ).join("") : '<tr class="empty-row"><td colspan="11">No hops yet</td></tr>';
 
   const miscRows = r.misc.length ? r.misc.map((m, i) =>
     '<tr data-idx="' + i + '">' +
@@ -976,7 +1001,7 @@ function designTabHtml(r, style) {
     '<div class="card"><h3>Fermentables <button class="btn btn-sm" data-action="addFermentable">+ Add Fermentable</button></h3>' +
     '<table class="ing-table"><thead><tr><th style="width:22%">Name</th><th>Amount (' + uLabel("weight-lb") + ')</th><th>Type</th><th>PPG</th><th>Colour (' + uLabel("color-srm") + ')</th><th>% Grist</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + fermRows + '</tbody></table></div>' +
     '<div class="card"><h3>Hops <button class="btn btn-sm" data-action="addHop">+ Add Hop</button></h3>' +
-    '<table class="ing-table"><thead><tr><th style="width:18%">Name</th><th>Amount (' + uLabel("weight-oz") + ')</th><th>Alpha %</th><th>Time (min)</th><th>Use</th><th>Stand Temp (' + uLabel("temp-f") + ')</th><th>IBU</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + hopRows + '</tbody></table></div>' +
+    '<table class="ing-table"><thead><tr><th style="width:18%">Name</th><th>Amount (' + uLabel("weight-oz") + ')</th><th>Alpha %</th><th>Time (min)</th><th>Use</th><th>Stand Temp (' + uLabel("temp-f") + ')</th><th>Dry Hop Day</th><th>Duration (days)</th><th>IBU</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + hopRows + '</tbody></table></div>' +
     '<div class="card"><h3>Yeast <span><button class="btn btn-sm" data-save-item="yeast">Save Item</button></span></h3><div class="field-grid">' +
     '<div class="field"><label>Strain</label><button type="button" class="btn btn-sm picker-btn" data-open-picker="yeast" style="width:100%;text-align:left;">' + escapeHtml(r.yeast.name || "\u2014 choose a strain \u2014") + '</button></div>' +
     '<div class="field"><label>Attenuation (%)</label><input type="number" step="1" data-field="yeastAttenuation" value="' + (r.yeast.attenuation * 100).toFixed(0) + '"/></div>' +
@@ -1200,7 +1225,7 @@ function wireTabEvents(r) {
   }));
   const actions = {
     addFermentable: () => r.fermentables.push({ name: FERMENTABLES[0].name, type: FERMENTABLES[0].type, amountLb: 1, ppg: FERMENTABLES[0].ppg, color: FERMENTABLES[0].srm, mashable: FERMENTABLES[0].mashable, cost: 0 }),
-    addHop: () => r.hops.push({ name: HOPS[0].name, amountOz: 1, alphaPct: HOPS[0].alpha, timeMin: 60, use: "Boil", whirlpoolTempF: 194, cost: 0 }),
+    addHop: () => r.hops.push({ name: HOPS[0].name, amountOz: 1, alphaPct: HOPS[0].alpha, timeMin: 60, use: "Boil", whirlpoolTempF: 194, dryHopDay: null, dryHopDurationDays: null, cost: 0 }),
     addMisc: () => r.misc.push({ name: "Whirlfloc Tablet", amount: 1, unit: "tablet", use: "Boil", cost: 0 }),
     addSalt: () => r.waterSalts.push({ name: Object.keys(WATER_SALTS)[0], grams: 1 }),
     addMashStep: () => r.mashSteps.push({ name: "Mash Out", temp: 168, time: 10 }),

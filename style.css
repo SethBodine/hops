@@ -451,6 +451,16 @@ button {
 .sanity-list { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--ink-dim); }
 .sanity-list li { margin-bottom: 2px; }
 
+/* ---- Run Checks modal report ---- */
+.check-group { margin-bottom: 14px; }
+.check-group:last-child { margin-bottom: 0; }
+.check-group h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.check-group ul { margin: 0; padding-left: 20px; font-size: 12.5px; color: var(--ink-dim); }
+.check-group li { margin-bottom: 4px; }
+.check-error h4 { color: var(--alert); }
+.check-warning h4 { color: var(--amber); }
+.check-info h4 { color: var(--ink-dim); }
+
 /* ---- Tabs ---- */
 .tabs {
   display: flex;

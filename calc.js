@@ -250,6 +250,61 @@ const Calc = {
     return -16.6999 - 0.0101059 * T + 0.00116512 * T * T + 0.173354 * T * V + 4.24267 * V - 0.0684226 * V * V;
   },
 
+  // ---- Recipe readiness checklist ("Run Checks" - BeerSmith 4's on-demand check button) ----
+  // Distinct from sanityWarnings: that flags physically-impossible values automatically and is
+  // always visible in a banner. This is a broader, on-demand "is this recipe actually ready to
+  // brew" pass - missing ingredients, incomplete hop schedules, style-range misses, etc. Each
+  // item is { severity: "error"|"warning"|"info", message }.
+  recipeChecks(d, r, style) {
+    const checks = [];
+    const add = (severity, message) => checks.push({ severity, message });
+
+    if (!r.fermentables.length) add("error", "No fermentables in this recipe.");
+    if (!r.hops.length) add("warning", "No hops added \u2014 this will be a completely unbittered, unflavoured beer unless that's intentional.");
+    if (!r.yeast.name) add("error", "No yeast strain selected.");
+    if (!r.styleName) add("info", "No style selected \u2014 the style-guideline comparison won't be shown.");
+
+    const hasBoilHop = r.hops.some(h => h.use === "Boil" && Number(h.timeMin) > 0);
+    const hasAnyBittering = r.hops.some(h => (h.use === "Boil" || h.use === "Whirlpool") && Number(h.amountOz) > 0);
+    if (r.hops.length && !hasBoilHop && !hasAnyBittering) add("warning", "No boil or whirlpool hop addition found \u2014 bitterness will be at or near zero.");
+
+    const mashableGrain = r.fermentables.some(f => f.mashable !== false);
+    if (mashableGrain && (!r.mashSteps || !r.mashSteps.length)) add("warning", "This recipe has mashable grain but no mash steps defined.");
+
+    const dryHops = r.hops.filter(h => h.use === "Dry Hop");
+    const dryHopsMissingSchedule = dryHops.filter(h => h.dryHopDay == null || h.dryHopDurationDays == null);
+    if (dryHopsMissingSchedule.length) add("warning", dryHopsMissingSchedule.length + " dry hop addition" + (dryHopsMissingSchedule.length > 1 ? "s don't" : " doesn't") + " have a start day and/or duration set.");
+
+    const whirlpoolMissingTemp = r.hops.filter(h => h.use === "Whirlpool" && h.whirlpoolTempF == null);
+    if (whirlpoolMissingTemp.length) add("info", whirlpoolMissingTemp.length + " whirlpool addition" + (whirlpoolMissingTemp.length > 1 ? "s are" : " is") + " using the default 194\u00b0F stand temperature \u2014 confirm this matches your process.");
+
+    if (Number(r.batchVolGal) > 0) {
+      const totalCost = this.totalCost([...r.fermentables, ...r.hops, r.yeast, ...r.misc]);
+      if (totalCost === 0) add("info", "No ingredient costs entered \u2014 cost tracking will show $0.");
+    }
+
+    const equip = r.equipmentId;
+    if (!equip) add("info", "No equipment profile linked \u2014 boil-off, trub loss, and equipment thermal-mass adjustments won't be applied.");
+
+    if (style && d) {
+      const rows = [
+        ["Original Gravity", d.og, style.og],
+        ["Final Gravity", d.fg, style.fg],
+        ["ABV", d.abv, style.abv],
+        ["IBU", d.ibu, style.ibu],
+        ["Colour", d.srm, style.srm],
+      ];
+      const outOfRange = rows.filter(([, val, range]) => this.inRange(val, range) === false);
+      if (outOfRange.length) add("info", outOfRange.length + " of 5 style metrics (" + outOfRange.map(o => o[0]).join(", ") + ") fall outside " + style.name + "'s guideline range.");
+    }
+
+    // Fold in the existing physical-implausibility checks too, so "Run Checks" is a genuine
+    // one-stop report rather than missing what the always-on banner already catches.
+    this.sanityWarnings(d, r).forEach(w => add("error", w));
+
+    return checks;
+  },
+
   // ---- Sanity checks: flag values that are physically implausible or likely a typo,
   // without being prescriptive about what "correct" looks like. Each returns a short,
   // friendly message rather than a technical one.
