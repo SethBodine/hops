@@ -250,6 +250,50 @@ const Calc = {
     return -16.6999 - 0.0101059 * T + 0.00116512 * T * T + 0.173354 * T * V + 4.24267 * V - 0.0684226 * V * V;
   },
 
+  // ---- SG <-> Plato/Brix ----
+  // Standard published polynomial (used across most brewing software/calculators).
+  sgToPlato(sg) { return -616.868 + 1111.14 * sg - 630.272 * sg * sg + 135.997 * sg * sg * sg; },
+  platoToSg(plato) { return 1 + (plato / (258.6 - ((plato / 258.2) * 227.1))); },
+
+  // Refractometer reading correction: a refractometer reads Brix (sugar concentration) but
+  // once alcohol is present (mid/post-fermentation), alcohol's refractive index throws off a
+  // naive Brix->SG conversion. This is the Sean Terrill (2011) regression, fit against paired
+  // hydrometer/refractometer readings across many actual beers - the standard correction used
+  // across most brewing calculators for finding true SG from original + current Brix.
+  correctedGravityFromBrix(originalBrix, currentBrix) {
+    const ob = originalBrix, fb = currentBrix;
+    return 1.001843 - 0.002318474 * ob - 0.000007775 * ob * ob - 0.000000034 * ob * ob * ob +
+      0.00574 * fb + 0.00003344 * fb * fb + 0.000000086 * fb * fb * fb;
+  },
+
+  // ---- Boil-off / dilution: what volume gets you from currentSG to targetSG ----
+  // Conservation of gravity points (points x volume stays ~constant as you boil off water or
+  // dilute with more): targetVol = currentVol x currentPoints / targetPoints. Positive
+  // "boilOffGal" means boil off that much; negative means add that much water instead.
+  dilutionTargetVol(currentVolGal, currentSG, targetSG) {
+    const currentPoints = (currentSG - 1) * 1000, targetPoints = (targetSG - 1) * 1000;
+    if (!targetPoints) return null;
+    const targetVolGal = (currentVolGal * currentPoints) / targetPoints;
+    return { targetVolGal, boilOffGal: currentVolGal - targetVolGal };
+  },
+
+  // ---- Yeast pitch rate: how many billion cells does this batch need? ----
+  // Standard rule-of-thumb pitch rates: ~0.75 million cells/mL/°Plato for ales, ~1.5 for
+  // lagers (roughly double, reflecting the larger healthy-pitch target lager fermentations
+  // want). cellsNeededBillion = plato x pitchRate(million/mL/°P) x volumeLitres.
+  pitchRateCellsNeededBillion(ogSG, volGal, style) {
+    const plato = this.sgToPlato(ogSG);
+    const rate = style === "Lager" ? 1.5 : 0.75;
+    const volL = volGal * 3.785411784;
+    return plato * rate * volL;
+  },
+  // Liquid yeast packs lose roughly ~21% viability over their first month (a commonly-cited
+  // rule of thumb, ~0.7%/day) - viableCellsBillion estimates what's left of a nominal 100
+  // billion fresh pack after `daysOld` days.
+  viableCellsBillion(freshCellsBillion, daysOld) {
+    return freshCellsBillion * Math.max(0, 1 - 0.007 * daysOld);
+  },
+
   // ---- Recipe readiness checklist ("Run Checks" - BeerSmith 4's on-demand check button) ----
   // Distinct from sanityWarnings: that flags physically-impossible values automatically and is
   // always visible in a banner. This is a broader, on-demand "is this recipe actually ready to
@@ -270,6 +314,20 @@ const Calc = {
 
     const mashableGrain = r.fermentables.some(f => f.mashable !== false);
     if (mashableGrain && (!r.mashSteps || !r.mashSteps.length)) add("warning", "This recipe has mashable grain but no mash steps defined.");
+
+    // Duplicate ingredient names - fermentables and misc only. Hops are deliberately excluded:
+    // the same hop added twice (e.g. once at 60min, once as a dry hop) is completely normal and
+    // not a mistake, unlike two fermentable or misc rows with the exact same name, which usually
+    // means "meant to edit the amount on the existing row" rather than "meant a second row".
+    const findDupes = list => {
+      const seen = new Map();
+      list.forEach(item => { const key = (item.name || "").trim().toLowerCase(); if (!key) return; seen.set(key, (seen.get(key) || 0) + 1); });
+      return Array.from(seen.entries()).filter(([, count]) => count > 1).map(([name]) => name);
+    };
+    const dupeFerms = findDupes(r.fermentables);
+    if (dupeFerms.length) add("warning", "Duplicate fermentable" + (dupeFerms.length > 1 ? "s" : "") + ": " + dupeFerms.join(", ") + " \u2014 each appears more than once. If that's not intentional, combine them into a single row.");
+    const dupeMisc = findDupes(r.misc);
+    if (dupeMisc.length) add("warning", "Duplicate misc/fining item" + (dupeMisc.length > 1 ? "s" : "") + ": " + dupeMisc.join(", ") + " \u2014 each appears more than once. If that's not intentional, combine them into a single row.");
 
     const dryHops = r.hops.filter(h => h.use === "Dry Hop");
     const dryHopsMissingSchedule = dryHops.filter(h => h.dryHopDay == null || h.dryHopDurationDays == null);

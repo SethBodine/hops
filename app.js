@@ -7,6 +7,7 @@ let state = {
   tree: null,
   batches: [],
   equipment: [],
+  packaging: [], // packaging/vessel size profiles (kegs, bottles, growlers) - seeded from PACKAGING_PRESETS
   inventory: { fermentables: [], hops: [], yeast: [], misc: [] },
   customIngredients: { fermentables: [], hops: [], yeast: [] },
   unitSystem: "metric", // NZ default. "us" is the alternative.
@@ -65,16 +66,22 @@ function newEquipment(preset) {
   const p = preset || EQUIPMENT_PRESETS[0];
   return { id: uid(), name: p.name, batchVolGal: p.batchVolGal, boilTimeMin: p.boilTimeMin, boilOffRateGalHr: p.boilOffRateGalHr, trubLossGal: p.trubLossGal, mashEfficiencyPct: p.mashEfficiencyPct, tempAdjustF: p.tempAdjustF != null ? p.tempAdjustF : 2 };
 }
+function newPackaging(preset) {
+  const p = preset || PACKAGING_PRESETS[0];
+  return { id: uid(), name: p.name, volGal: p.volGal };
+}
 function newBatch(recipeId) {
   const r = state.recipes.find(x => x.id === recipeId);
   return {
-    id: uid(), recipeId, recipeName: r ? r.name : "Unknown Recipe", status: "Planning", brewDate: new Date().toISOString().slice(0, 10), measuredOG: null, measuredFG: null, notes: "",
+    id: uid(), recipeId, recipeName: r ? r.name : "Unknown Recipe", status: "Planning", brewDate: new Date().toISOString().slice(0, 10), brewStartTime: null, brewEndTime: null, measuredOG: null, measuredFG: null, notes: "",
     // Measured brew-day stats (canonical units: gal, SG, F - same convention as recipes)
     measuredPreBoilGravity: null, measuredPreBoilVolGal: null,
     measuredBatchSizeGal: null, // "into fermenter" - used for measured brewhouse efficiency
     measuredBottlingVolGal: null,
     carbMethod: "Keg", carbTargetVols: null, carbTempF: null, // null carbTargetVols/TempF = fall back to the recipe's own carbonation card
-    fermentationReadings: [], // [{ id, date, tempF, gravity, notes }] - date is an ISO date string, sorted by date on render
+    fermentationReadings: [], // [{ id, date, time, tempF, gravity, notes }] - date is an ISO date string, sorted by date+time on render
+    inventoryDeducted: false, // set true once "Deduct from Inventory" has been used for this batch
+    suggestionDismissed: null, // status name the user last dismissed the "move to X?" banner for
   };
 }
 // Backfill fields for batches saved before the measured-stats/fermentation-log feature existed.
@@ -87,12 +94,17 @@ function migrateBatch(b) {
   if (b.carbTargetVols === undefined) b.carbTargetVols = null;
   if (b.carbTempF === undefined) b.carbTempF = null;
   if (!Array.isArray(b.fermentationReadings)) b.fermentationReadings = [];
+  b.fermentationReadings.forEach(fr => { if (fr.time === undefined) fr.time = null; });
+  if (b.brewStartTime === undefined) b.brewStartTime = null;
+  if (b.brewEndTime === undefined) b.brewEndTime = null;
+  if (b.inventoryDeducted === undefined) b.inventoryDeducted = false;
+  if (b.suggestionDismissed === undefined) b.suggestionDismissed = null;
   return b;
 }
 // Adds every catalogue entry for `kind` matching `region` (or every entry, if region === "__all__")
 // into the inventory list, skipping names already present. Returns how many were added.
 function addRegionToInventory(kind, region) {
-  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
+  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS, misc: MISC }[kind];
   if (!catalogue) return 0;
   const existing = new Set(state.inventory[kind].map(i => i.name.toLowerCase()));
   let added = 0;
@@ -124,7 +136,20 @@ function migrateInventoryModel() {
     addRegionToInventory("fermentables", state.region);
     addRegionToInventory("hops", state.region);
     addRegionToInventory("yeast", state.region);
+    addRegionToInventory("misc", "__all__"); // not region-specific, so seed the whole small catalogue
     state.catalogueSeeded = true;
+  }
+  if (!state.miscCatalogueSeeded) {
+    // Separate one-time flag: the Misc/Fining catalogue didn't exist when catalogueSeeded was
+    // first introduced, so existing saves already have catalogueSeeded=true and would otherwise
+    // never get misc items backfilled.
+    addRegionToInventory("misc", "__all__");
+    state.miscCatalogueSeeded = true;
+  }
+  if (!state.packagingSeeded) {
+    // Same idea as miscCatalogueSeeded above - Packaging didn't exist yet for existing saves.
+    if (!state.packaging.length) state.packaging = PACKAGING_PRESETS.map(p => newPackaging(p));
+    state.packagingSeeded = true;
   }
   delete state.customIngredients;
   state.inventoryModelV2 = true;
@@ -436,6 +461,8 @@ function promptImportBackup(parsed) {
         Tree.pruneOrphans(restored.tree, new Set((restored.recipes || []).map(r => r.id)));
         Object.keys(state).forEach(k => delete state[k]);
         Object.assign(state, restored, { activeSection: "recipes", activeId: (restored.recipes && restored.recipes[0]) ? restored.recipes[0].id : null, activeTab: "design", activeBatchId: null });
+        if (!state.equipment) state.equipment = [];
+        if (!state.packaging) state.packaging = PACKAGING_PRESETS.map(p => newPackaging(p));
         if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
         if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
         if (!state.unitSystem) state.unitSystem = "metric";
@@ -980,9 +1007,9 @@ function designTabHtml(r, style) {
 
   const miscRows = r.misc.length ? r.misc.map((m, i) =>
     '<tr data-idx="' + i + '">' +
-    '<td><input data-tbl="misc" data-field="name" value="' + escapeHtml(m.name) + '"/></td>' +
+    '<td><button type="button" class="btn btn-sm picker-btn" data-open-picker="misc" title="Click to choose a different item">' + escapeHtml(m.name) + '</button></td>' +
     '<td><input type="number" step="0.1" data-tbl="misc" data-field="amount" value="' + m.amount + '"/></td>' +
-    '<td><select data-tbl="misc" data-field="unit">' + ["g", "oz", "tsp", "tablet", "item"].map(u => '<option ' + (m.unit === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
+    '<td><select data-tbl="misc" data-field="unit">' + ["g", "oz", "tsp", "ml", "tablet", "item"].map(u => '<option ' + (m.unit === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
     '<td><select data-tbl="misc" data-field="use">' + ["Mash", "Boil", "Fermentation", "Bottling"].map(u => '<option ' + (m.use === u ? "selected" : "") + '>' + u + '</option>').join("") + '</select></td>' +
     '<td><input type="number" step="0.01" data-tbl="misc" data-field="cost" value="' + (m.cost || 0) + '"/></td>' +
     '<td><button class="del-btn" data-del="misc">\u2715</button></td></tr>'
@@ -1059,22 +1086,48 @@ function styleCompareHtml(r, style) {
     const hasOverride = overrideVal != null && !isNaN(overrideVal);
     const spanLo = Math.min(lo, val, hasOverride ? overrideVal : lo) - (hi - lo) * 0.15;
     const spanHi = Math.max(hi, val, hasOverride ? overrideVal : hi) + (hi - lo) * 0.15;
-    const pct = v => ((v - spanLo) / (spanHi - spanLo)) * 100;
+    const pct = v => Math.max(0, Math.min(100, ((v - spanLo) / (spanHi - spanLo)) * 100));
     const inRange = Calc.inRange(val, range);
     const overrideInRange = hasOverride && Calc.inRange(unitkind ? rawOverride : overrideVal, range);
-    return '<div class="style-compare-row ' + (inRange ? "" : "out") + '">' +
+    // Once an override exists it's the "real" reading, so it takes the prominent dot styling;
+    // the calculated estimate steps back to a smaller, fainter secondary marker.
+    const estClass = "dot " + (hasOverride ? "dot-secondary" : "dot-est") + (inRange ? "" : " out");
+    const overrideClass = "dot dot-est" + (overrideInRange ? "" : " out");
+    return '<div class="style-compare-row ' + (hasOverride ? (overrideInRange ? "" : "out") : (inRange ? "" : "out")) + '">' +
       '<div class="metric-name">' + label + '</div>' +
-      '<div class="track"><div class="band" style="left:' + pct(lo) + '%; width:' + (pct(hi) - pct(lo)) + '%;"></div>' +
-      '<div class="dot dot-est" title="Estimated: ' + fmt(val) + '" style="left:' + pct(val) + '%;"></div>' +
-      (hasOverride ? '<div class="dot dot-override ' + (overrideInRange ? "" : "out") + '" title="Override: ' + fmt(overrideVal) + '" style="left:' + pct(overrideVal) + '%;"></div>' : '') +
+      '<div class="track">' +
+      '<div class="range-tick" style="left:' + pct(lo) + '%;"><span class="range-tick-label range-tick-lo">' + fmt(lo) + '</span></div>' +
+      '<div class="range-tick" style="left:' + pct(hi) + '%;"><span class="range-tick-label range-tick-hi">' + fmt(hi) + '</span></div>' +
+      '<div class="band" style="left:' + pct(lo) + '%; width:' + (pct(hi) - pct(lo)) + '%;"></div>' +
+      '<div class="' + estClass + '" title="Estimated: ' + fmt(val) + '" style="left:' + pct(val) + '%;"></div>' +
+      (hasOverride ? '<div class="' + overrideClass + '" title="Override: ' + fmt(overrideVal) + '" style="left:' + pct(overrideVal) + '%;"></div>' : '') +
       '</div>' +
-      '<div class="value-label">' + fmt(val) + '<span class="range-text">' + fmt(lo) + '\u2013' + fmt(hi) + '</span></div>' +
+      '<div class="value-label">' + (hasOverride ? fmt(overrideVal) : fmt(val)) + (hasOverride ? '<span class="range-text">est. ' + fmt(val) + '</span>' : '<span class="range-text">&nbsp;</span>') + '</div>' +
       '<div class="override-cell">' +
       '<input type="number" step="' + step + '" class="override-input" data-field="styleOverride.' + field + '"' + (unitkind ? ' data-unitkind="' + unitkind + '"' : '') +
       ' placeholder="Override" value="' + (hasOverride ? overrideVal : "") + '" title="Manual/measured override - shown alongside the estimate, doesn\u2019t replace it"/>' +
-      (hasOverride ? '<button class="override-clear" data-clear-override="' + field + '" title="Clear override">\u2715</button>' : '') +
+      '<button class="override-clear" data-clear-override="' + field + '" title="Clear override"' + (hasOverride ? "" : ' style="visibility:hidden;"') + '>\u2715</button>' +
       '</div></div>';
   }).join("");
+}
+// Wires the Style Guide Comparison card's override inputs/clear buttons. Called both at initial
+// tab render (wireTabEvents) and every time refreshComputed() replaces the card's innerHTML -
+// that replacement creates brand-new DOM nodes with no listeners, so without re-calling this,
+// every override after the first stops working (the original bug: only the very first field
+// edited ever had a live listener, and even its own "clear" button died the moment any
+// override triggered a re-render).
+function wireStyleOverrideEvents(container, r) {
+  container.querySelectorAll('[data-field^="styleOverride."]').forEach(el => el.addEventListener("change", () => {
+    const field = el.dataset.field.split(".")[1];
+    let val = el.value === "" ? null : Number(el.value);
+    if (val != null && el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
+    r.styleOverride[field] = val;
+    saveToStorage(); refreshComputed(r);
+  }));
+  container.querySelectorAll("[data-clear-override]").forEach(btn => btn.addEventListener("click", () => {
+    r.styleOverride[btn.dataset.clearOverride] = null;
+    saveToStorage(); refreshComputed(r);
+  }));
 }
 
 // ---- Water tab ----
@@ -1085,7 +1138,10 @@ function waterTabHtml(r, d) {
     '<input type="number" step="1" data-field="waterBase.' + ion + '" value="' + (r.waterBase[ion] || 0) + '" style="width:100%;text-align:center;background:transparent;border:none;color:var(--amber);font-family:\'JetBrains Mono\',monospace;font-size:17px;margin-top:4px;"/></div>'
   ).join("");
   const adjustedIons = ["Ca", "Mg", "Na", "SO4", "Cl", "HCO3"].map(ion =>
-    '<div class="ion-box"><div class="ion-name">' + ion + '</div><div class="ion-value">' + Math.round(d.finalWater[ion]) + '</div></div>'
+    '<div class="ion-box"><div class="ion-name">' + ion + '</div><div class="ion-value" data-ion-group="mash" data-ion="' + ion + '">' + Math.round(d.finalWater[ion]) + '</div></div>'
+  ).join("");
+  const adjustedSpargeIons = ["Ca", "Mg", "Na", "SO4", "Cl", "HCO3"].map(ion =>
+    '<div class="ion-box"><div class="ion-name">' + ion + '</div><div class="ion-value" data-ion-group="sparge" data-ion="' + ion + '">' + Math.round(d.finalSpargeWater[ion]) + '</div></div>'
   ).join("");
   const targetOptions = Object.keys(WATER_TARGET_PROFILES).map(k => '<option ' + (t === k ? "selected" : "") + '>' + k + '</option>').join("");
   const saltRows = r.waterSalts.length ? r.waterSalts.map((s, i) =>
@@ -1097,7 +1153,7 @@ function waterTabHtml(r, d) {
   const acidTypeOptions = sel => ACID_TYPES.map(a => '<option ' + (sel === a ? "selected" : "") + '>' + a + '</option>').join("");
 
   return (
-    '<div class="card"><h3>Base Water Profile</h3><div class="field-grid">' +
+    '<div class="card"><h3>Base Water Profile</h3><p style="color:var(--ink-faint);font-size:12px;margin:-6px 0 10px;">Your source water, before any salts or acid additions \u2014 edit the ion values directly below.</p><div class="field-grid">' +
     '<div class="field"><label>Source Name</label><input data-field="waterBaseName" value="' + escapeHtml(r.waterBaseName) + '"/></div>' +
     '<div class="field"><label>Mash Water (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="mashWaterVolGal" data-unitkind="volume-gal" value="' + uVal(r.mashWaterVolGal, "volume-gal") + '"/></div>' +
     '<div class="field"><label>Sparge Water (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="spargeWaterVolGal" data-unitkind="volume-gal" value="' + uVal(r.spargeWaterVolGal, "volume-gal") + '"/></div>' +
@@ -1105,6 +1161,7 @@ function waterTabHtml(r, d) {
     '</div><div class="ion-grid" style="margin-top:14px;">' + ionInputs + '</div></div>' +
     '<div class="card"><h3>Mash & Sparge Water Agents<span><select id="targetProfileSelect" class="btn btn-sm">' + targetOptions + '</select>' +
     '<button class="btn btn-sm" data-action="addSalt">+ Add Salt</button></span></h3>' +
+    '<p style="color:var(--ink-faint);font-size:12px;margin:-2px 0 10px;">Each salt\u2019s <strong>Use</strong> determines which profile below it affects \u2014 Mash-use salts adjust the Mash profile, Sparge-use salts adjust the Sparge profile.</p>' +
     '<table class="ing-table"><thead><tr><th style="width:36%">Salt</th><th>Amount (g)</th><th>Use</th><th></th></tr></thead><tbody>' + saltRows + '</tbody></table></div>' +
     '<div class="card"><h3>Acid Additions</h3><div class="field-grid">' +
     '<div class="field"><label>Mash Acid</label><select data-field="mashAcid.type">' + acidTypeOptions(r.mashAcid.type) + '</select></div>' +
@@ -1112,7 +1169,8 @@ function waterTabHtml(r, d) {
     '<div class="field"><label>Sparge Acid</label><select data-field="spargeAcid.type">' + acidTypeOptions(r.spargeAcid.type) + '</select></div>' +
     '<div class="field"><label>Sparge Acid Amount (mL)</label><input type="number" step="0.1" data-field="spargeAcid.amountMl" value="' + r.spargeAcid.amountMl + '"/></div>' +
     '</div><p style="color:var(--ink-faint);font-size:12px;margin:10px 0 0;">Tracked for reference only \u2014 not currently factored into the residual alkalinity estimate below (proper mash pH prediction needs a grain-acidity model beyond what Hops calculates).</p></div>' +
-    '<div class="card"><h3>Adjusted Mash Water Profile</h3><div class="ion-grid">' + adjustedIons + '</div></div>' +
+    '<div class="card"><h3>Adjusted Mash Water Profile <span style="font-weight:400;color:var(--ink-faint);font-size:12px;">(calculated \u2014 base + Mash-use salts)</span></h3><div class="ion-grid">' + adjustedIons + '</div></div>' +
+    '<div class="card"><h3>Adjusted Sparge Water Profile <span style="font-weight:400;color:var(--ink-faint);font-size:12px;">(calculated \u2014 base + Sparge-use salts)</span></h3><div class="ion-grid">' + adjustedSpargeIons + '</div></div>' +
     '<div class="card"><h3>Water Analysis (Mash Water)</h3>' +
     '<div class="stat-row"><span class="stat-label">Residual Alkalinity</span><span class="stat-value stat-ra">' + d.ra.toFixed(1) + ' ppm as CaCO3</span></div>' +
     '<div class="stat-row"><span class="stat-label">Alkalinity</span><span class="stat-value stat-alk">' + d.alkalinity.toFixed(1) + ' ppm as CaCO3</span></div>' +
@@ -1141,7 +1199,7 @@ function mashTabHtml(r, d) {
     '<div style="margin-top:16px;">' + steps + '<button class="btn btn-sm add-row-btn" data-action="addMashStep">+ Add Mash Step</button></div></div>' +
     '<div class="card"><h3>Strike Water</h3><div class="field-grid">' +
     '<div class="field"><label>Grain Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" data-field="grainTempF" data-unitkind="temp-f" value="' + uVal(r.grainTempF, "temp-f") + '"/></div>' +
-    '<div class="field" style="display:flex; align-items:flex-end; gap:6px; padding-bottom:6px;"><label style="display:flex; align-items:center; gap:6px; margin:0; text-transform:none; font-size:13px; color:var(--ink);"><input type="checkbox" id="adjustTempForEquip" ' + (r.adjustTempForEquip ? "checked" : "") + ' ' + (equip ? "" : "disabled") + '/> Adjust Temp for Equipment</label></div>' +
+    '<div class="field" style="display:flex; align-items:flex-end; gap:6px; padding-bottom:6px;"><label style="display:flex; align-items:center; gap:6px; margin:0; text-transform:none; font-size:13px; color:var(--ink);" title="' + (equip ? "" : "Link an Equipment Profile on the Design tab to enable this") + '"><input type="checkbox" id="adjustTempForEquip" ' + (r.adjustTempForEquip ? "checked" : "") + ' ' + (equip ? "" : "disabled") + ' title="' + (equip ? "" : "Link an Equipment Profile on the Design tab to enable this") + '"/> Adjust Temp for Equipment</label></div>' +
     '</div>' +
     (equip ? "" : '<p style="color:var(--ink-faint);font-size:12px;margin:6px 0 0;">Link an Equipment Profile on the Design tab to enable the equipment thermal-mass adjustment.</p>') +
     '<div class="stat-row" style="margin-top:8px;"><span class="stat-label">Water : Grain Ratio</span><span class="stat-value stat-ratio">' + d.ratioQtPerLb.toFixed(2) + ' qt/lb</span></div>' +
@@ -1214,6 +1272,8 @@ function wireTabEvents(r) {
       const idx = Number(btn.closest("[data-idx]").dataset.idx);
       if (kind === "fermentables") {
         openIngredientPicker("fermentables", state.inventory.fermentables, r.fermentables[idx].name, true, item => applyFermentableChoice(r, idx, item));
+      } else if (kind === "misc") {
+        openIngredientPicker("misc", state.inventory.misc, r.misc[idx].name, true, item => applyMiscChoice(r, idx, item));
       } else {
         openIngredientPicker("hops", state.inventory.hops, r.hops[idx].name, true, item => applyHopChoice(r, idx, item));
       }
@@ -1226,7 +1286,7 @@ function wireTabEvents(r) {
   const actions = {
     addFermentable: () => r.fermentables.push({ name: FERMENTABLES[0].name, type: FERMENTABLES[0].type, amountLb: 1, ppg: FERMENTABLES[0].ppg, color: FERMENTABLES[0].srm, mashable: FERMENTABLES[0].mashable, cost: 0 }),
     addHop: () => r.hops.push({ name: HOPS[0].name, amountOz: 1, alphaPct: HOPS[0].alpha, timeMin: 60, use: "Boil", whirlpoolTempF: 194, dryHopDay: null, dryHopDurationDays: null, cost: 0 }),
-    addMisc: () => r.misc.push({ name: "Whirlfloc Tablet", amount: 1, unit: "tablet", use: "Boil", cost: 0 }),
+    addMisc: () => r.misc.push({ name: MISC[0].name, amount: 1, unit: MISC[0].unit, use: MISC[0].use, cost: 0 }),
     addSalt: () => r.waterSalts.push({ name: Object.keys(WATER_SALTS)[0], grams: 1 }),
     addMashStep: () => r.mashSteps.push({ name: "Mash Out", temp: 168, time: 10 }),
     startBatchFromRecipe: () => { const b = newBatch(r.id); state.batches.push(b); state.activeBatchId = b.id; state.activeSection = "batches"; saveToStorage(); renderAll(); },
@@ -1239,7 +1299,7 @@ function wireTabEvents(r) {
   const yeastCost = panel.querySelector('[data-field="yeastCost"]');
   if (yeastCost) yeastCost.addEventListener("input", () => { r.yeast.cost = Number(yeastCost.value); saveToStorage(); refreshComputed(r); });
   const targetFgInput = panel.querySelector('[data-field="targetFg"]');
-  if (targetFgInput) targetFgInput.addEventListener("input", () => { applyTargetFg(r, Number(targetFgInput.value)); saveToStorage(); renderMain(); });
+  if (targetFgInput) targetFgInput.addEventListener("change", () => { applyTargetFg(r, Number(targetFgInput.value)); saveToStorage(); renderMain(); });
   const matchStyleFgBtn = panel.querySelector('[data-action="matchStyleFg"]');
   if (matchStyleFgBtn) matchStyleFgBtn.addEventListener("click", () => {
     const style = styleRef(r.styleName);
@@ -1281,18 +1341,8 @@ function wireTabEvents(r) {
     saveItemToLibrary(btn.dataset.saveItem, btn.closest("[data-idx]"), r);
   }));
 
-  // ---- Style Guide Comparison: manual override inputs (change, not input - see note above) ----
-  panel.querySelectorAll('[data-field^="styleOverride."]').forEach(el => el.addEventListener("change", () => {
-    const field = el.dataset.field.split(".")[1];
-    let val = el.value === "" ? null : Number(el.value);
-    if (val != null && el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
-    r.styleOverride[field] = val;
-    saveToStorage(); refreshComputed(r);
-  }));
-  panel.querySelectorAll("[data-clear-override]").forEach(btn => btn.addEventListener("click", () => {
-    r.styleOverride[btn.dataset.clearOverride] = null;
-    saveToStorage(); refreshComputed(r);
-  }));
+  // ---- Style Guide Comparison: manual override inputs/clear buttons ----
+  wireStyleOverrideEvents(panel, r);
 }
 
 // ---- Rich picker modal ----
@@ -1309,6 +1359,7 @@ function pickerItemMeta(kind, item) {
   }
   if (kind === "fermentables") return item.type + " \u00b7 " + item.ppg + " PPG \u00b7 " + uVal(item.srm, "color-srm").toFixed(1) + " " + uLabel("color-srm");
   if (kind === "hops") return item.alpha.toFixed(1) + "% alpha acid";
+  if (kind === "misc") return "Typical unit: " + item.unit + " \u00b7 Usually added at " + item.use;
   return item.type + " \u00b7 " + Math.round(item.attenuation * 100) + "% attenuation"; // yeast
 }
 function pickerItemGroup(kind, item) { return kind === "style" ? (item.category || "Other") : (item.origin || "Custom"); }
@@ -1352,7 +1403,7 @@ function openIngredientPicker(kind, library, currentName, allowCustom, onSelect)
     });
     return anyMatch ? html : '<p style="color:var(--ink-faint);font-size:13px;padding:8px 2px;">No matches.</p>';
   };
-  const title = { style: "Choose a Style", fermentables: "Choose a Fermentable", hops: "Choose a Hop", yeast: "Choose a Yeast Strain" }[kind];
+  const title = { style: "Choose a Style", fermentables: "Choose a Fermentable", hops: "Choose a Hop", yeast: "Choose a Yeast Strain", misc: "Choose a Misc / Fining Item" }[kind];
   const html =
     '<h3>' + title + '</h3>' +
     '<input type="text" class="picker-search" placeholder="Search by name\u2026" autofocus/>' +
@@ -1373,7 +1424,7 @@ function openIngredientPicker(kind, library, currentName, allowCustom, onSelect)
     searchEl.focus();
     const customBtn = overlay.querySelector("[data-picker-custom]");
     if (customBtn) customBtn.addEventListener("click", () => {
-      const name = window.prompt("Custom " + (kind === "fermentables" ? "fermentable" : kind === "hops" ? "hop" : "yeast strain") + " name:");
+      const name = window.prompt("Custom " + (kind === "fermentables" ? "fermentable" : kind === "hops" ? "hop" : kind === "misc" ? "misc/fining item" : "yeast strain") + " name:");
       closeModal();
       if (name) onSelect(name);
     });
@@ -1389,6 +1440,16 @@ function applyFermentableChoice(r, idx, item) {
     state.inventory.fermentables.push(Object.assign(newInventoryItem("fermentables"), { name: item }));
   } else {
     Object.assign(r.fermentables[idx], { name: item.name, ppg: item.ppg, color: item.srm, type: item.type, mashable: item.mashable });
+  }
+  saveToStorage(); renderMain(); toast("Set " + (typeof item === "string" ? item : item.name));
+}
+function applyMiscChoice(r, idx, item) {
+  snapshotUndo(r);
+  if (typeof item === "string") {
+    r.misc[idx].name = item;
+    state.inventory.misc.push(Object.assign(newInventoryItem("misc"), { name: item }));
+  } else {
+    r.misc[idx].name = item.name; r.misc[idx].unit = item.unit; r.misc[idx].use = item.use;
   }
   saveToStorage(); renderMain(); toast("Set " + (typeof item === "string" ? item : item.name));
 }
@@ -1431,7 +1492,7 @@ function saveItemToLibrary(kind, rowEl, r) {
     entry = { name: r.yeast.name, type: r.yeast.type, attenuation: r.yeast.attenuation };
   }
   if (!entry.name) { toast("Give it a name first"); return; }
-  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS }[kind];
+  const catalogue = { fermentables: FERMENTABLES, hops: HOPS, yeast: YEASTS, misc: MISC }[kind];
   const catalogueMatch = catalogue.find(x => x.name.toLowerCase() === entry.name.toLowerCase());
   if (catalogueMatch && catalogueMatch.origin) entry.origin = catalogueMatch.origin;
   const list = state.inventory[kind];
@@ -1460,7 +1521,11 @@ function refreshComputed(r) {
 
   if (state.activeTab === "design") {
     const headers = Array.from(document.querySelectorAll(".card h3")).filter(h => h.textContent.indexOf("Style Guide") === 0);
-    if (headers[0]) headers[0].closest(".card").innerHTML = '<h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p style="color:var(--ink-faint);font-size:13px;">Pick a style above to compare.</p>');
+    if (headers[0]) {
+      const styleCard = headers[0].closest(".card");
+      styleCard.innerHTML = '<h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p style="color:var(--ink-faint);font-size:13px;">Pick a style above to compare.</p>');
+      if (style) wireStyleOverrideEvents(styleCard, r);
+    }
     document.querySelectorAll(".grist-pct").forEach((el, i) => { if (d.grainPercents[i] != null) el.textContent = d.grainPercents[i].toFixed(1) + "%"; });
     document.querySelectorAll(".hop-ibu").forEach((el, i) => { if (d.ibuBreakdown[i] != null) el.textContent = d.ibuBreakdown[i].toFixed(1); });
     const preBoil = document.querySelector(".preboil-gravity");
@@ -1472,7 +1537,8 @@ function refreshComputed(r) {
   }
 
   if (state.activeTab === "water") {
-    document.querySelectorAll(".ion-value").forEach((el, i) => { const ion = ["Ca", "Mg", "Na", "SO4", "Cl", "HCO3"][i]; if (ion) el.textContent = Math.round(d.finalWater[ion]); });
+    document.querySelectorAll('.ion-value[data-ion-group="mash"]').forEach(el => { el.textContent = Math.round(d.finalWater[el.dataset.ion]); });
+    document.querySelectorAll('.ion-value[data-ion-group="sparge"]').forEach(el => { el.textContent = Math.round(d.finalSpargeWater[el.dataset.ion]); });
     const ra = document.querySelector(".stat-ra"); if (ra) ra.textContent = d.ra.toFixed(1) + " ppm as CaCO3";
     const alk = document.querySelector(".stat-alk"); if (alk) alk.textContent = d.alkalinity.toFixed(1) + " ppm as CaCO3";
     const hard = document.querySelector(".stat-hardness"); if (hard) hard.textContent = d.hardness.toFixed(1) + " ppm as CaCO3";
@@ -1531,16 +1597,28 @@ function renderBatchesMain(main) {
   const carbOutput = carbBatchGal ? (b.carbMethod === "Bottle"
     ? Calc.primingSugarGrams(carbBatchGal, carbTempF, carbTargetVols).toFixed(0) + " g corn sugar (" + (Calc.primingSugarGrams(carbBatchGal, carbTempF, carbTargetVols) / 28.3495).toFixed(2) + " oz)"
     : Calc.kegCarbPSI(carbTempF, carbTargetVols).toFixed(1) + " PSI") : "\u2014";
+  const canDeduct = statuses.indexOf(b.status) >= statuses.indexOf("Brewing");
+  const suggested = suggestedNextStatus(b);
+  const showSuggestBanner = suggested && b.suggestionDismissed !== suggested;
 
   main.innerHTML =
     '<div class="recipe-header"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><h1 class="display" style="margin:0;font-size:28px;">' + escapeHtml(b.recipeName) + '</h1>' + ageBadge + '</div><div class="header-actions"><button class="btn btn-sm" id="rebrewBtn" title="Start a fresh batch of the same recipe">Rebrew</button><button class="btn btn-sm" id="shareBatchBtn">Share</button><button class="btn btn-sm btn-danger" id="deleteBatchBtn">Delete Batch</button></div></div>' +
+    (showSuggestBanner ? '<div class="suggest-banner"><span class="suggest-icon">\ud83d\udca1</span><span class="suggest-text">This batch looks like it\u2019s moved on \u2014 move to <strong>' + suggested + '</strong>?</span><div class="suggest-actions"><button class="btn btn-sm btn-primary" id="acceptSuggestBtn">Move to ' + suggested + '</button><button class="btn btn-sm" id="dismissSuggestBtn">Not now</button></div></div>' : "") +
     '<div class="card"><h3>Status</h3><div style="display:flex; gap:8px; flex-wrap:wrap;">' + statusBtns + '</div></div>' +
     '<div class="card"><h3>Brew Day</h3><div class="field-grid">' +
     '<div class="field"><label>Recipe</label><select id="batchRecipeSelect">' + recipeOptions + '</select></div>' +
     '<div class="field"><label>Brew Date</label><input type="date" data-bfield="brewDate" value="' + b.brewDate + '"/></div>' +
+    '<div class="field"><label>Start Time</label><input type="time" data-bfield="brewStartTime" value="' + (b.brewStartTime || "") + '"/></div>' +
+    '<div class="field"><label>End Time</label><input type="time" data-bfield="brewEndTime" value="' + (b.brewEndTime || "") + '"/></div>' +
     '<div class="field"><label>Measured OG</label><input type="number" step="0.001" data-bfield="measuredOG" value="' + (b.measuredOG != null ? b.measuredOG : "") + '" placeholder="' + (d ? d.og.toFixed(3) : "1.050") + '"/></div>' +
     '<div class="field"><label>Measured FG</label><input type="number" step="0.001" data-bfield="measuredFG" value="' + (b.measuredFG != null ? b.measuredFG : "") + '" placeholder="' + (d ? d.fg.toFixed(3) : "1.010") + '"/></div>' +
     '</div></div>' +
+    '<div class="card"><h3>Ingredients Needed <span><button class="btn btn-sm" id="deductInventoryBtn" ' + (canDeduct ? "" : 'disabled title="Available once this batch reaches Brewing"') + '>' + (b.inventoryDeducted ? "\u2713 Deducted" : "Deduct from Inventory") + '</button></span></h3>' +
+    (r ? '<table class="ing-table"><tbody>' +
+      r.fermentables.map(f => '<tr><td>' + escapeHtml(f.name) + '</td><td class="num">' + uVal(f.amountLb, "weight-lb").toFixed(2) + ' ' + uLabel("weight-lb") + '</td></tr>').join("") +
+      r.hops.map(h => '<tr><td>' + escapeHtml(h.name) + '</td><td class="num">' + uVal(h.amountOz, "weight-oz").toFixed(2) + ' ' + uLabel("weight-oz") + '</td></tr>').join("") +
+      '<tr><td>' + escapeHtml(r.yeast.name) + '</td><td class="num">1 pkg</td></tr></tbody></table>' : '<p style="color:var(--ink-faint);">Original recipe was deleted.</p>') +
+    '</div>' +
     (d ? '<div class="card"><h3>Mash &amp; Pre-Boil</h3><div class="field-grid">' +
       '<div class="field"><label>Measured Pre-Boil Gravity</label><input type="number" step="0.001" data-bfield="measuredPreBoilGravity" value="' + (b.measuredPreBoilGravity != null ? b.measuredPreBoilGravity : "") + '" placeholder="' + d.preBoilGravity.toFixed(3) + '"/></div>' +
       '<div class="field"><label>Measured Pre-Boil Volume (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-bfield="measuredPreBoilVolGal" data-unitkind="volume-gal" value="' + (b.measuredPreBoilVolGal != null ? uVal(b.measuredPreBoilVolGal, "volume-gal") : "") + '" placeholder="' + uVal(d.preBoilVolGal, "volume-gal").toFixed(1) + '"/></div>' +
@@ -1558,19 +1636,14 @@ function renderBatchesMain(main) {
       batchCompareRow("Brewhouse Efficiency", (Number(r.efficiencyPct) || 0).toFixed(1) + "%", measBhEff != null ? measBhEff.toFixed(1) + "%" : null) +
       (estCalories != null ? batchCompareRow("Calories (per 12oz)", estCalories.toFixed(0) + " kcal", measCalories != null ? measCalories.toFixed(0) + " kcal" : null) : "") +
       '</div>' : "") +
-    '<div class="card"><h3>Ingredients Needed <button class="btn btn-sm" id="deductInventoryBtn">Deduct from Inventory</button></h3>' +
-    (r ? '<table class="ing-table"><tbody>' +
-      r.fermentables.map(f => '<tr><td>' + escapeHtml(f.name) + '</td><td class="num">' + uVal(f.amountLb, "weight-lb").toFixed(2) + ' ' + uLabel("weight-lb") + '</td></tr>').join("") +
-      r.hops.map(h => '<tr><td>' + escapeHtml(h.name) + '</td><td class="num">' + uVal(h.amountOz, "weight-oz").toFixed(2) + ' ' + uLabel("weight-oz") + '</td></tr>').join("") +
-      '<tr><td>' + escapeHtml(r.yeast.name) + '</td><td class="num">1 pkg</td></tr></tbody></table>' : '<p style="color:var(--ink-faint);">Original recipe was deleted.</p>') +
-    '</div>' +
     '<div class="card"><h3>Fermentation Readings <span><button class="btn btn-sm" id="importTiltBtn">Import CSV</button> <button class="btn btn-sm" id="addReadingBtn">+ Add Reading</button></span></h3>' +
     '<input type="file" id="tiltFileInput" accept=".csv,text/csv" style="display:none;"/>' +
     fermentationChartSvg(b.fermentationReadings) +
-    (b.fermentationReadings.length ? '<table class="ing-table ferm-readings-table"><thead><tr><th>Date</th><th>Temp (' + uLabel("temp-f") + ')</th><th>Gravity</th><th>Notes</th><th></th></tr></thead><tbody>' +
-      [...b.fermentationReadings].sort((x, y) => (x.date || "").localeCompare(y.date || "")).map(fr =>
+    (b.fermentationReadings.length ? '<table class="ing-table ferm-readings-table"><thead><tr><th>Date</th><th>Time</th><th>Temp (' + uLabel("temp-f") + ')</th><th>Gravity</th><th>Notes</th><th></th></tr></thead><tbody>' +
+      [...b.fermentationReadings].sort((x, y) => ((x.date || "") + (x.time || "")).localeCompare((y.date || "") + (y.time || ""))).map(fr =>
         '<tr data-reading-id="' + fr.id + '">' +
         '<td><input type="date" data-rfield="date" value="' + (fr.date || "") + '"/></td>' +
+        '<td><input type="time" data-rfield="time" value="' + (fr.time || "") + '"/></td>' +
         '<td><input type="number" step="1" data-rfield="tempF" data-unitkind="temp-f" value="' + (fr.tempF != null ? uVal(fr.tempF, "temp-f") : "") + '"/></td>' +
         '<td><input type="number" step="0.001" data-rfield="gravity" value="' + (fr.gravity != null ? fr.gravity : "") + '"/></td>' +
         '<td><input type="text" data-rfield="notes" value="' + escapeHtml(fr.notes || "") + '" placeholder="e.g. krausen dropped"/></td>' +
@@ -1578,6 +1651,7 @@ function renderBatchesMain(main) {
       ).join("") + '</tbody></table>' : '<p style="color:var(--ink-faint);font-size:13px;">No readings yet \u2014 add one manually or import a Tilt hydrometer CSV export.</p>') +
     '</div>' +
     '<div class="card"><h3>Bottling / Kegging</h3><div class="field-grid">' +
+    '<div class="field"><label>Vessel Size</label><select id="vesselSizeSelect"><option value="">\u2014 pick a vessel to set volume \u2014</option>' + state.packaging.map(p => '<option value="' + p.id + '">' + escapeHtml(p.name) + ' (' + uVal(p.volGal, "volume-gal").toFixed(2) + ' ' + uLabel("volume-gal") + ')</option>').join("") + '</select></div>' +
     '<div class="field"><label>Measured Bottling/Kegging Volume (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-bfield="measuredBottlingVolGal" data-unitkind="volume-gal" value="' + (b.measuredBottlingVolGal != null ? uVal(b.measuredBottlingVolGal, "volume-gal") : "") + '" placeholder="' + (r ? uVal(r.batchVolGal, "volume-gal").toFixed(1) : "") + '"/></div>' +
     '<div class="field"><label>Method</label><select data-bfield="carbMethod"><option ' + (b.carbMethod === "Keg" ? "selected" : "") + '>Keg</option><option ' + (b.carbMethod === "Bottle" ? "selected" : "") + '>Bottle</option></select></div>' +
     '<div class="field"><label>Target Volumes CO2</label><input type="number" step="0.1" data-bfield="carbTargetVols" value="' + (b.carbTargetVols != null ? b.carbTargetVols : "") + '" placeholder="' + carbTargetVols.toFixed(1) + '"/></div>' +
@@ -1586,7 +1660,11 @@ function renderBatchesMain(main) {
     '</div>' +
     '<div class="card"><h3>Batch Notes</h3><textarea class="notes-area" id="batchNotes" placeholder="Brew day observations, gravity readings, off-flavours, timing...">' + escapeHtml(b.notes) + '</textarea></div>';
 
-  main.querySelectorAll("[data-status]").forEach(btn => btn.addEventListener("click", () => { b.status = btn.dataset.status; saveToStorage(); renderAll(); }));
+  main.querySelectorAll("[data-status]").forEach(btn => btn.addEventListener("click", () => attemptStatusChange(b, r, btn.dataset.status)));
+  if (showSuggestBanner) {
+    document.getElementById("acceptSuggestBtn").addEventListener("click", () => { b.suggestionDismissed = null; attemptStatusChange(b, r, suggested); });
+    document.getElementById("dismissSuggestBtn").addEventListener("click", () => { b.suggestionDismissed = suggested; saveToStorage(); renderMain(); });
+  }
   document.getElementById("shareBatchBtn").addEventListener("click", () => shareBatch(b));
   document.getElementById("rebrewBtn").addEventListener("click", () => rebrewBatch(b));
   document.getElementById("deleteBatchBtn").addEventListener("click", () => {
@@ -1612,7 +1690,13 @@ function renderBatchesMain(main) {
     if (el.dataset.bfield !== "brewDate" && el.dataset.bfield !== "notes") renderMain(); else renderSidebar();
   }));
   document.getElementById("batchNotes").addEventListener("input", e => { b.notes = e.target.value; saveToStorage(); });
-  document.getElementById("deductInventoryBtn").addEventListener("click", () => deductInventoryForBatch(r));
+  document.getElementById("deductInventoryBtn").addEventListener("click", () => deductInventoryForBatch(r, b));
+  document.getElementById("vesselSizeSelect").addEventListener("change", e => {
+    const vessel = state.packaging.find(p => p.id === e.target.value);
+    if (!vessel) return;
+    b.measuredBottlingVolGal = vessel.volGal;
+    saveToStorage(); renderMain();
+  });
 
   // ---- Fermentation readings: add/edit/delete + CSV import ----
   document.getElementById("addReadingBtn").addEventListener("click", () => {
@@ -1650,17 +1734,77 @@ function renderBatchesMain(main) {
   });
 }
 function batchCompareRow(label, est, actual) { return '<div class="stat-row"><span class="stat-label">' + label + '</span><span class="stat-value">' + est + ' est' + (actual ? ' \u2192 ' + actual + ' actual' : "") + '</span></div>'; }
-function deductInventoryForBatch(r) {
+const BATCH_STATUSES = ["Planning", "Brewing", "Fermenting", "Completed"];
+// Heuristics for "this batch looks like it's moved on" - shown as a dismissible banner rather
+// than auto-changing status outright, since the data appearing doesn't necessarily mean the
+// brewer wants the status bumped right this second (per user preference: suggest, don't force).
+function suggestedNextStatus(b) {
+  if (b.status === "Planning" && (b.brewStartTime || b.measuredPreBoilGravity != null || b.measuredPreBoilVolGal != null || b.measuredOG != null)) return "Brewing";
+  if (b.status === "Brewing" && (b.fermentationReadings.length > 0 || b.measuredBatchSizeGal != null)) return "Fermenting";
+  if (b.status === "Fermenting" && (b.measuredFG != null || b.measuredBottlingVolGal != null)) return "Completed";
+  return null;
+}
+function attemptStatusChange(b, r, newStatus) {
+  if (newStatus === b.status) return;
+  const movingForward = BATCH_STATUSES.indexOf(newStatus) > BATCH_STATUSES.indexOf(b.status);
+  if (!movingForward) { b.status = newStatus; saveToStorage(); renderAll(); return; } // moving backward needs no readiness checks
+
+  const missing = [];
+  if (newStatus === "Brewing" && r) {
+    Calc.recipeChecks(computeDerived(r), r, styleRef(r.styleName)).filter(c => c.severity === "error").forEach(e => missing.push(e.message));
+  }
+  if (newStatus === "Fermenting" && b.measuredOG == null) missing.push("No Measured OG has been entered yet.");
+  if (newStatus === "Completed") {
+    if (!b.fermentationReadings.length) missing.push("No fermentation readings have been logged.");
+    if (b.measuredFG == null) missing.push("No Measured FG has been entered yet.");
+  }
+
+  const commit = () => { b.status = newStatus; b.suggestionDismissed = null; saveToStorage(); renderAll(); };
+
+  // Moving to Completed without having deducted inventory gets its own explicit prompt (per
+  // spec) rather than folding into the generic confirm() below - it's common enough to forget,
+  // and "Ignore" vs "Deduct Now" are both reasonable, so it deserves real buttons instead of a
+  // single OK/Cancel.
+  if (newStatus === "Completed" && !b.inventoryDeducted) {
+    const missingHtml = missing.length ? '<ul style="color:var(--ink-dim);font-size:13px;margin:8px 0 0;padding-left:20px;">' + missing.map(m => "<li>" + escapeHtml(m) + "</li>").join("") + "</ul>" : "";
+    showModal(
+      '<h3>Before marking this batch Completed</h3>' +
+      '<p style="color:var(--ink-dim);font-size:13px;">This batch\u2019s ingredients haven\u2019t been deducted from inventory yet \u2014 don\u2019t forget!</p>' + missingHtml +
+      '<div style="display:flex;gap:8px;margin-top:16px;">' +
+      '<button class="btn btn-primary" id="deductNowBtn" style="flex:1;">Deduct Now</button>' +
+      '<button class="btn" id="ignoreDeductBtn" style="flex:1;">Ignore &amp; Continue</button>' +
+      '</div>',
+      overlay => {
+        overlay.querySelector("#deductNowBtn").addEventListener("click", () => { closeModal(); deductInventoryForBatch(r, b); commit(); });
+        overlay.querySelector("#ignoreDeductBtn").addEventListener("click", () => { closeModal(); commit(); });
+      }
+    );
+    return;
+  }
+
+  if (missing.length) {
+    // Soft warning only - OK proceeds without requiring the missing data to be filled in first,
+    // Cancel (or clicking outside) just stays on the current status.
+    if (!confirm("Before moving to " + newStatus + ":\n\n" + missing.map(m => "\u2022 " + m).join("\n") + "\n\nContinue anyway?")) return;
+  }
+  commit();
+}
+function deductInventoryForBatch(r, b) {
   if (!r) return;
   let deducted = 0;
   r.fermentables.forEach(f => { const item = state.inventory.fermentables.find(i => i.name.toLowerCase() === f.name.toLowerCase()); if (item) { item.stock -= Units.lbToUnit(f.amountLb, item.unit); deducted++; } });
   r.hops.forEach(h => { const item = state.inventory.hops.find(i => i.name.toLowerCase() === h.name.toLowerCase()); if (item) { item.stock -= Units.lbToUnit(h.amountOz / 16, item.unit); deducted++; } });
   const yeastItem = state.inventory.yeast.find(i => i.name.toLowerCase() === r.yeast.name.toLowerCase());
   if (yeastItem) { yeastItem.stock -= 1; deducted++; }
+  if (b) b.inventoryDeducted = true;
   saveToStorage();
   toast(deducted ? "Deducted " + deducted + " item(s) from inventory" : "No matching inventory items found");
+  renderMain();
 }
-function handleNewBatch() { const r = state.recipes[0]; const b = newBatch(r.id); state.batches.push(b); state.activeBatchId = b.id; saveToStorage(); renderAll(); toast("New batch started"); }
+function handleNewBatch() {
+  const r = state.recipes.find(x => x.id === state.activeId) || state.recipes[0];
+  const b = newBatch(r.id); state.batches.push(b); state.activeBatchId = b.id; saveToStorage(); renderAll(); toast("New batch started");
+}
 // Start a new, blank batch of the same recipe (BeerSmith 4's "New Session" idea, scoped down to
 // this app's simpler model: batches already ARE the brew-log entries, so "rebrewing" is just
 // starting a fresh one against the same recipe and switching to it - nothing about the old
@@ -1741,7 +1885,7 @@ function parseTiltCsv(text) {
 
 // ================= INVENTORY =================
 const INVENTORY_KINDS = [["fermentables", "Fermentables"], ["hops", "Hops"], ["yeast", "Yeast"], ["misc", "Misc / Fining"]];
-const CATALOGUE_KINDS = ["fermentables", "hops", "yeast"]; // kinds backed by data.js + region bulk-add
+const CATALOGUE_KINDS = ["fermentables", "hops", "yeast", "misc"]; // kinds backed by data.js + region bulk-add
 function renderInventoryMain(main) {
   const allShown = state.inventoryRegionFilter.length === 0;
   const filterChips = REGIONS.map(r => '<button class="btn btn-sm" data-region-chip="' + escapeHtml(r) + '" style="' + (state.inventoryRegionFilter.includes(r) ? "background:var(--amber);color:#fff;border-color:var(--amber);" : "") + '">' + escapeHtml(r) + '</button>').join("");
@@ -1823,7 +1967,7 @@ function inventoryCardHtml(kind, label) {
 }
 
 function inventoryRowHtml(kind, item, i) {
-  const unitOptions = ["kg", "g", "lb", "oz", "pkg", "tablet", "item"];
+  const unitOptions = ["kg", "g", "lb", "oz", "pkg", "tablet", "tsp", "ml", "item"];
   let specCells = "";
   if (kind === "fermentables") {
     specCells = '<td><select data-ifield="type">' + ["Grain", "Adjunct", "Sugar", "Extract"].map(t => '<option ' + (item.type === t ? "selected" : "") + '>' + t + '</option>').join("") + '</select></td>' +
@@ -1859,14 +2003,42 @@ function renderEquipmentMain(main) {
       '</div></div>'
     ).join("") : '<div class="empty-state"><h2>No equipment profiles yet</h2><p>Add one to set default batch size, boil-off rate, and efficiency for your system \u2014 apply it to any recipe from the Design tab.</p></div>');
   document.getElementById("addEquipBtn").addEventListener("click", () => { state.equipment.push(newEquipment()); saveToStorage(); renderMain(); });
-  main.querySelectorAll("[data-efield]").forEach(el => el.addEventListener("input", () => {
-    const idx = Number(el.closest("[data-idx]").dataset.idx);
-    let val = el.type === "number" ? Number(el.value) : el.value;
-    if (el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
-    state.equipment[idx][el.dataset.efield] = val; saveToStorage();
-    if (el.dataset.efield === "name") renderMain();
-  }));
+  main.querySelectorAll("[data-efield]").forEach(el => {
+    const evt = el.dataset.efield === "name" ? "change" : "input"; // "change" (blur/Enter) - "input" would rebuild the whole page on every keystroke and drop focus, scrambling typed text
+    el.addEventListener(evt, () => {
+      const idx = Number(el.closest("[data-idx]").dataset.idx);
+      let val = el.type === "number" ? Number(el.value) : el.value;
+      if (el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
+      state.equipment[idx][el.dataset.efield] = val; saveToStorage();
+      if (el.dataset.efield === "name") renderMain();
+    });
+  });
   main.querySelectorAll("[data-del-equip]").forEach(btn => btn.addEventListener("click", () => { state.equipment.splice(Number(btn.dataset.delEquip), 1); saveToStorage(); renderMain(); }));
+
+  // ---- Packaging / Vessel Sizes ----
+  const packagingHtml = '<div class="card"><h3>Packaging / Vessel Sizes <button class="btn btn-sm" id="addPackagingBtn">+ Add Vessel</button></h3>' +
+    '<p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Referenced by the Bottling/Kegging card on any Batch \u2014 pick a vessel there instead of typing an approximate volume.</p>' +
+    (state.packaging.length ? '<table class="ing-table"><thead><tr><th style="width:60%">Name</th><th>Volume (' + uLabel("volume-gal") + ')</th><th></th></tr></thead><tbody>' +
+      state.packaging.map((p, i) =>
+        '<tr data-pidx="' + i + '">' +
+        '<td><input data-pfield="name" value="' + escapeHtml(p.name) + '"/></td>' +
+        '<td><input type="number" step="0.01" data-pfield="volGal" data-unitkind="volume-gal" value="' + uVal(p.volGal, "volume-gal") + '"/></td>' +
+        '<td><button class="del-btn" data-del-packaging="' + i + '">\u2715</button></td></tr>'
+      ).join("") + '</tbody></table>' : '<p style="color:var(--ink-faint);font-size:13px;">No vessel sizes yet.</p>') +
+    '</div>';
+  main.insertAdjacentHTML("beforeend", packagingHtml);
+  document.getElementById("addPackagingBtn").addEventListener("click", () => { state.packaging.push(newPackaging({ name: "New Vessel", volGal: 5 })); saveToStorage(); renderMain(); });
+  main.querySelectorAll("[data-pfield]").forEach(el => {
+    const evt = el.dataset.pfield === "name" ? "change" : "input"; // same focus-loss fix as Equipment's own name field
+    el.addEventListener(evt, () => {
+      const idx = Number(el.closest("[data-pidx]").dataset.pidx);
+      let val = el.type === "number" ? Number(el.value) : el.value;
+      if (el.dataset.unitkind) val = Units.toCanonical(val, el.dataset.unitkind, state.unitSystem);
+      state.packaging[idx][el.dataset.pfield] = val; saveToStorage();
+      if (el.dataset.pfield === "name") renderMain();
+    });
+  });
+  main.querySelectorAll("[data-del-packaging]").forEach(btn => btn.addEventListener("click", () => { state.packaging.splice(Number(btn.dataset.delPackaging), 1); saveToStorage(); renderMain(); }));
 }
 
 // ================= TOOLS =================
@@ -1886,7 +2058,45 @@ function renderToolsMain(main) {
     '<div class="field"><label>Measured Gravity</label><input type="number" step="0.001" id="calcHydroSG" value="1.050"/></div>' +
     '<div class="field"><label>Sample Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" id="calcHydroTemp" value="' + uVal(95, "temp-f") + '"/></div>' +
     '<div class="field"><label>Calibration Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" id="calcHydroCal" value="' + uVal(60, "temp-f") + '"/></div>' +
-    '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label">Corrected Gravity</span><span class="stat-value" id="calcHydroOut">\u2014</span></div></div>';
+    '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label">Corrected Gravity</span><span class="stat-value" id="calcHydroOut">\u2014</span></div></div>' +
+    '<div class="card"><h3>Keg Carbonation Pressure</h3><div class="field-grid">' +
+    '<div class="field"><label>Beer Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" id="calcKegTemp" value="' + uVal(38, "temp-f") + '"/></div>' +
+    '<div class="field"><label>Target Volumes CO2</label><input type="number" step="0.1" id="calcKegTarget" value="2.4"/></div>' +
+    '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label">Set Regulator To</span><span class="stat-value" id="calcKegOut">\u2014</span></div></div>' +
+    '<div class="card"><h3>Refractometer Correction</h3><p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Once alcohol is present, a refractometer over-reads \u2014 use this to find the true gravity from Brix.</p><div class="field-grid">' +
+    '<div class="field"><label>Original Brix (\u00b0Bx)</label><input type="number" step="0.1" id="calcRefriOB" value="12.4"/></div>' +
+    '<div class="field"><label>Current Brix (\u00b0Bx)</label><input type="number" step="0.1" id="calcRefriFB" value="6.5"/></div>' +
+    '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label">Corrected Gravity</span><span class="stat-value" id="calcRefriOut">\u2014</span></div></div>' +
+    '<div class="card"><h3>Boil-off / Dilution</h3><p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Figure out how much to boil off (concentrate) or top up with water (dilute) to hit a target gravity.</p><div class="field-grid">' +
+    '<div class="field"><label>Current Volume (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" id="calcDilVol" value="' + uVal(6, "volume-gal") + '"/></div>' +
+    '<div class="field"><label>Current Gravity</label><input type="number" step="0.001" id="calcDilCurSG" value="1.040"/></div>' +
+    '<div class="field"><label>Target Gravity</label><input type="number" step="0.001" id="calcDilTargetSG" value="1.050"/></div>' +
+    '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label" id="calcDilLabel">Boil Off</span><span class="stat-value" id="calcDilOut">\u2014</span></div></div>' +
+    '<div class="card"><h3>Yeast Pitch Rate</h3><p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Rough guide only, not an exact growth model \u2014 a fresh liquid pack is typically ~100 billion cells; dry yeast packs are usually already enough for most standard-gravity ale batches.</p><div class="field-grid">' +
+    '<div class="field"><label>Original Gravity</label><input type="number" step="0.001" id="calcPitchOG" value="1.050"/></div>' +
+    '<div class="field"><label>Batch Size (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" id="calcPitchVol" value="' + uVal(5, "volume-gal") + '"/></div>' +
+    '<div class="field"><label>Style</label><select id="calcPitchStyle"><option>Ale</option><option>Lager</option></select></div>' +
+    '<div class="field"><label>Liquid Pack Age (days)</label><input type="number" step="1" id="calcPitchAge" value="0"/></div>' +
+    '</div><div class="stat-row"><span class="stat-label">Cells Needed</span><span class="stat-value" id="calcPitchNeed">\u2014</span></div>' +
+    '<div class="stat-row"><span class="stat-label">One Fresh Liquid Pack (adjusted for age)</span><span class="stat-value" id="calcPitchAvail">\u2014</span></div>' +
+    '<div class="stat-row"><span class="stat-label" id="calcPitchVerdictLabel">Verdict</span><span class="stat-value" id="calcPitchVerdict">\u2014</span></div>' +
+    '<p style="color:var(--ink-faint);font-size:11.5px;margin:10px 0 0;">If underpitched: a stir-plate starter roughly adds 1.5\u20132x cell count per step, or simply pitch two packs.</p></div>' +
+    '<div class="card"><h3>Unit Converter</h3><div class="field-grid">' +
+    '<div class="field"><label>Weight</label><input type="number" step="0.01" id="calcConvWeight" value="1"/></div>' +
+    '<div class="field"><label>&nbsp;</label><select id="calcConvWeightUnit"><option value="kg">kg</option><option value="lb">lb</option><option value="oz">oz</option><option value="g">g</option></select></div>' +
+    '</div><div class="stat-row"><span class="stat-label" id="calcConvWeightLabel">=</span><span class="stat-value" id="calcConvWeightOut">\u2014</span></div>' +
+    '<div class="field-grid" style="margin-top:10px;">' +
+    '<div class="field"><label>Volume</label><input type="number" step="0.01" id="calcConvVol" value="5"/></div>' +
+    '<div class="field"><label>&nbsp;</label><select id="calcConvVolUnit"><option value="gal">gal (US)</option><option value="l">L</option><option value="qt">qt</option><option value="floz">fl oz</option></select></div>' +
+    '</div><div class="stat-row"><span class="stat-label" id="calcConvVolLabel">=</span><span class="stat-value" id="calcConvVolOut">\u2014</span></div>' +
+    '<div class="field-grid" style="margin-top:10px;">' +
+    '<div class="field"><label>Temperature</label><input type="number" step="0.1" id="calcConvTemp" value="68"/></div>' +
+    '<div class="field"><label>&nbsp;</label><select id="calcConvTempUnit"><option value="f">\u00b0F</option><option value="c">\u00b0C</option></select></div>' +
+    '</div><div class="stat-row"><span class="stat-label" id="calcConvTempLabel">=</span><span class="stat-value" id="calcConvTempOut">\u2014</span></div>' +
+    '<div class="field-grid" style="margin-top:10px;">' +
+    '<div class="field"><label>Gravity</label><input type="number" step="0.001" id="calcConvSG" value="1.050"/></div>' +
+    '</div><div class="stat-row"><span class="stat-label">= \u00b0Plato / \u00b0Brix</span><span class="stat-value" id="calcConvPlatoOut">\u2014</span></div>' +
+    '</div>';
 
   const abvOut = document.getElementById("calcABVOut");
   const updateABV = () => { const og = Number(document.getElementById("calcOG").value), fg = Number(document.getElementById("calcFG").value); abvOut.textContent = Calc.estimateABV(og, fg).toFixed(2) + "%"; };
@@ -1911,12 +2121,95 @@ function renderToolsMain(main) {
     hydroOut.textContent = (sg * (poly(t) / poly(c))).toFixed(4);
   };
   ["calcHydroSG", "calcHydroTemp", "calcHydroCal"].forEach(id => document.getElementById(id).addEventListener("input", updateHydro)); updateHydro();
+
+  const kegOut = document.getElementById("calcKegOut");
+  const updateKeg = () => {
+    const tempF = Units.toCanonical(Number(document.getElementById("calcKegTemp").value), "temp-f", state.unitSystem);
+    const target = Number(document.getElementById("calcKegTarget").value);
+    kegOut.textContent = Calc.kegCarbPSI(tempF, target).toFixed(1) + " PSI";
+  };
+  ["calcKegTemp", "calcKegTarget"].forEach(id => document.getElementById(id).addEventListener("input", updateKeg)); updateKeg();
+
+  const refriOut = document.getElementById("calcRefriOut");
+  const updateRefri = () => {
+    const ob = Number(document.getElementById("calcRefriOB").value);
+    const fb = Number(document.getElementById("calcRefriFB").value);
+    refriOut.textContent = Calc.correctedGravityFromBrix(ob, fb).toFixed(3);
+  };
+  ["calcRefriOB", "calcRefriFB"].forEach(id => document.getElementById(id).addEventListener("input", updateRefri)); updateRefri();
+
+  const dilOut = document.getElementById("calcDilOut"), dilLabel = document.getElementById("calcDilLabel");
+  const updateDil = () => {
+    const volGal = Units.toCanonical(Number(document.getElementById("calcDilVol").value), "volume-gal", state.unitSystem);
+    const curSG = Number(document.getElementById("calcDilCurSG").value);
+    const targetSG = Number(document.getElementById("calcDilTargetSG").value);
+    const result = Calc.dilutionTargetVol(volGal, curSG, targetSG);
+    if (!result) { dilOut.textContent = "\u2014"; return; }
+    const boilOff = result.boilOffGal >= 0;
+    dilLabel.textContent = boilOff ? "Boil Off" : "Add Water";
+    dilOut.textContent = uVal(Math.abs(result.boilOffGal), "volume-gal").toFixed(2) + " " + uLabel("volume-gal") + " (to " + uVal(result.targetVolGal, "volume-gal").toFixed(2) + " " + uLabel("volume-gal") + " total)";
+  };
+  ["calcDilVol", "calcDilCurSG", "calcDilTargetSG"].forEach(id => document.getElementById(id).addEventListener("input", updateDil)); updateDil();
+
+  const pitchNeed = document.getElementById("calcPitchNeed"), pitchAvail = document.getElementById("calcPitchAvail"), pitchVerdict = document.getElementById("calcPitchVerdict");
+  const updatePitch = () => {
+    const og = Number(document.getElementById("calcPitchOG").value);
+    const volGal = Units.toCanonical(Number(document.getElementById("calcPitchVol").value), "volume-gal", state.unitSystem);
+    const style = document.getElementById("calcPitchStyle").value;
+    const ageDays = Number(document.getElementById("calcPitchAge").value);
+    const needed = Calc.pitchRateCellsNeededBillion(og, volGal, style);
+    const avail = Calc.viableCellsBillion(100, ageDays);
+    pitchNeed.textContent = needed.toFixed(0) + " billion cells";
+    pitchAvail.textContent = avail.toFixed(0) + " billion cells";
+    const ratio = avail / needed;
+    pitchVerdict.textContent = ratio >= 1 ? "Plenty \u2014 no starter needed" : ratio >= 0.6 ? "A bit short \u2014 a starter would help" : "Underpitched \u2014 use a starter or pitch 2 packs";
+    pitchVerdict.style.color = ratio >= 1 ? "var(--ink)" : ratio >= 0.6 ? "var(--amber)" : "var(--alert)";
+  };
+  ["calcPitchOG", "calcPitchVol", "calcPitchStyle", "calcPitchAge"].forEach(id => document.getElementById(id).addEventListener("input", updatePitch)); updatePitch();
+
+  // ---- Unit converter ----
+  const weightToKg = { kg: 1, lb: 0.45359237, oz: 0.028349523125, g: 0.001 };
+  const updateConvWeight = () => {
+    const val = Number(document.getElementById("calcConvWeight").value);
+    const unit = document.getElementById("calcConvWeightUnit").value;
+    const kg = val * weightToKg[unit];
+    document.getElementById("calcConvWeightLabel").textContent = val + " " + unit + " =";
+    document.getElementById("calcConvWeightOut").textContent = (kg / weightToKg.kg).toFixed(3) + " kg \u00b7 " + (kg / weightToKg.lb).toFixed(3) + " lb \u00b7 " + (kg / weightToKg.oz).toFixed(2) + " oz \u00b7 " + (kg / weightToKg.g).toFixed(1) + " g";
+  };
+  ["calcConvWeight", "calcConvWeightUnit"].forEach(id => document.getElementById(id).addEventListener("input", updateConvWeight)); updateConvWeight();
+
+  const volToL = { gal: 3.785411784, l: 1, qt: 0.946352946, floz: 0.0295735296 };
+  const updateConvVol = () => {
+    const val = Number(document.getElementById("calcConvVol").value);
+    const unit = document.getElementById("calcConvVolUnit").value;
+    const l = val * volToL[unit];
+    document.getElementById("calcConvVolLabel").textContent = val + " " + unit + " =";
+    document.getElementById("calcConvVolOut").textContent = (l / volToL.gal).toFixed(3) + " gal \u00b7 " + (l / volToL.l).toFixed(3) + " L \u00b7 " + (l / volToL.qt).toFixed(2) + " qt \u00b7 " + (l / volToL.floz).toFixed(1) + " fl oz";
+  };
+  ["calcConvVol", "calcConvVolUnit"].forEach(id => document.getElementById(id).addEventListener("input", updateConvVol)); updateConvVol();
+
+  const updateConvTemp = () => {
+    const val = Number(document.getElementById("calcConvTemp").value);
+    const unit = document.getElementById("calcConvTempUnit").value;
+    const f = unit === "c" ? (val * 9 / 5) + 32 : val;
+    const c = unit === "f" ? (val - 32) * 5 / 9 : val;
+    document.getElementById("calcConvTempLabel").textContent = val + "\u00b0" + unit.toUpperCase() + " =";
+    document.getElementById("calcConvTempOut").textContent = f.toFixed(1) + "\u00b0F \u00b7 " + c.toFixed(1) + "\u00b0C";
+  };
+  ["calcConvTemp", "calcConvTempUnit"].forEach(id => document.getElementById(id).addEventListener("input", updateConvTemp)); updateConvTemp();
+
+  const updateConvPlato = () => {
+    const sg = Number(document.getElementById("calcConvSG").value);
+    document.getElementById("calcConvPlatoOut").textContent = Calc.sgToPlato(sg).toFixed(1) + " \u00b0P/Bx";
+  };
+  document.getElementById("calcConvSG").addEventListener("input", updateConvPlato); updateConvPlato();
 }
 
 // ---- Init ----
 function seedDefaults() {
   state.tree = Tree.createRoot();
   if (!state.equipment.length) state.equipment = EQUIPMENT_PRESETS.map(p => newEquipment(p));
+  if (!state.packaging.length) state.packaging = PACKAGING_PRESETS.map(p => newPackaging(p));
   if (!state.recipes.length) { const r = newRecipe(); state.recipes.push(r); state.activeId = r.id; state.tree.children.push(Tree.createLeaf(r.id)); }
 }
 
@@ -1925,6 +2218,7 @@ function init() {
   if (!had) seedDefaults();
   if (!state.tree) { state.tree = Tree.createRoot(); state.recipes.forEach(r => state.tree.children.push(Tree.createLeaf(r.id))); }
   if (!state.equipment) state.equipment = [];
+  if (!state.packaging) state.packaging = [];
   if (!state.batches) state.batches = [];
   if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
   if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };
@@ -2007,6 +2301,7 @@ async function handleOpenWorkingFile() {
     Object.keys(state).forEach(k => delete state[k]);
     Object.assign(state, restored, { activeSection: "recipes", activeId: (restored.recipes && restored.recipes[0]) ? restored.recipes[0].id : null, activeTab: "design", activeBatchId: null });
     if (!state.equipment) state.equipment = [];
+    if (!state.packaging) state.packaging = PACKAGING_PRESETS.map(p => newPackaging(p));
     if (!state.batches) state.batches = [];
     if (!state.inventory) state.inventory = { fermentables: [], hops: [], yeast: [], misc: [] };
     if (!state.customIngredients) state.customIngredients = { fermentables: [], hops: [], yeast: [] };

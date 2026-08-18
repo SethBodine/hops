@@ -127,6 +127,7 @@ button {
   transition: border-color .15s, background .15s;
 }
 .btn:hover { border-color: var(--amber-dim); background: var(--card-raised); }
+.btn:disabled, .btn:disabled:hover { opacity: 0.45; cursor: not-allowed; border-color: var(--line); background: var(--card); }
 .btn-primary { background: var(--amber); color: #17130C; border-color: var(--amber); font-weight: 600; }
 .btn-primary:hover { background: #CE9138; }
 .btn-danger { color: var(--alert); }
@@ -451,6 +452,22 @@ button {
 .sanity-list { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--ink-dim); }
 .sanity-list li { margin-bottom: 2px; }
 
+/* ---- Suggested status banner (Batches tab) ---- */
+.suggest-banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: rgba(185,121,31,0.10);
+  border: 1px solid rgba(185,121,31,0.35);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+.suggest-icon { font-size: 18px; flex-shrink: 0; }
+.suggest-text { font-size: 13px; color: var(--ink-dim); flex: 1; min-width: 200px; }
+.suggest-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
 /* ---- Run Checks modal report ---- */
 .check-group { margin-bottom: 14px; }
 .check-group:last-child { margin-bottom: 0; }
@@ -586,7 +603,7 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   grid-template-columns: 130px 1fr 90px 110px;
   align-items: center;
   gap: 14px;
-  padding: 9px 0;
+  padding: 9px 0 20px;
   border-bottom: 1px solid var(--line);
 }
 .style-compare-row:last-child { border-bottom: none; }
@@ -603,6 +620,27 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   background: rgba(122,155,92,0.35);
   border-radius: 4px;
 }
+/* Explicit min/max markers on the track itself, not just a number off to the side */
+.style-compare-row .range-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--ink-faint);
+  opacity: 0.6;
+  transform: translateX(-50%);
+}
+.style-compare-row .range-tick-label {
+  position: absolute;
+  top: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.style-compare-row .range-tick-lo { left: 1px; transform: none; }
+.style-compare-row .range-tick-hi { right: -1px; left: auto; transform: translateX(100%); }
 .style-compare-row .dot {
   position: absolute;
   top: -3px;
@@ -611,15 +649,20 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   background: var(--amber);
   border: 2px solid var(--bg-deep);
   transform: translateX(-50%);
-}
-.style-compare-row.out .dot.dot-est { background: var(--alert); }
-.style-compare-row .dot.dot-override {
-  background: var(--ink);
-  width: 10px; height: 10px;
-  top: -1px;
   z-index: 2;
 }
-.style-compare-row .dot.dot-override.out { background: var(--alert); }
+.style-compare-row.out .dot.dot-est { background: var(--alert); }
+/* Once an override is set, it takes over as the prominent dot-est-styled marker (via the
+   estClass logic in styleCompareHtml), and the calculated estimate steps back to this
+   smaller, fainter "secondary" style - reflecting that the override is the real reading. */
+.style-compare-row .dot.dot-secondary {
+  background: var(--ink-faint);
+  width: 9px; height: 9px;
+  top: -0.5px;
+  z-index: 1;
+  opacity: 0.8;
+}
+.style-compare-row .dot.dot-secondary.out { background: var(--alert); opacity: 0.6; }
 .style-compare-row .value-label { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-align: right; }
 .style-compare-row .value-label .range-text { display: block; font-size: 10.5px; color: var(--ink-faint); margin-top: 2px; }
 .style-compare-row .override-cell { display: flex; align-items: center; gap: 4px; }
@@ -671,6 +714,19 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   align-items: center;
   margin-bottom: 8px;
 }
+.mash-step input {
+  width: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--ink);
+  font-size: 13px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.mash-step input:focus { outline: none; border-color: var(--amber-dim); }
+.mash-step .del-btn { color: var(--ink-faint); background: none; border: none; font-size: 15px; padding: 2px 6px; }
+.mash-step .del-btn:hover { color: var(--alert); }
 
 /* ---- Notes ---- */
 textarea.notes-area {

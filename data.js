@@ -458,17 +458,24 @@ const CARBONATION_PROFILES = {
   "British Cask Ale": 1.5,
   "European Lager": 2.6,
   "American Ale": 2.4,
+  "American Lager": 2.6,
   "Belgian Ale": 2.8,
   "German Wheat Beer": 3.3,
+  "Saison / Farmhouse": 3.0,
+  "Barleywine / Strong Ale": 2.0,
+  "Fruit Beer": 2.8,
   "Highly Carbonated": 3.4,
 };
 
 const FERMENTATION_PROFILES = {
   "Standard Ale": "Primary at 18-20\u00b0C for 10-14 days, then condition 2 weeks.",
+  "Ale, Single Stage": "Primary and condition in the same vessel at 18-20\u00b0C for 3-4 weeks total \u2014 no transfer to secondary.",
   "British Ale": "Primary at 18-19\u00b0C for 5-7 days, then condition.",
   "Lager": "Primary at 10-12\u00b0C for 2-3 weeks, diacetyl rest at 16\u00b0C for 2 days, then lager at 1-4\u00b0C for 4-8 weeks.",
+  "Lager, Fast Schedule": "Primary at 12-14\u00b0C for 10-12 days, diacetyl rest at 16\u00b0C for 2 days, then cold crash and package \u2014 a shortened lager timeline.",
   "Belgian Warm Ferment": "Primary at 22-26\u00b0C for 10-14 days, allow temperature to free-rise late in fermentation.",
   "Hefeweizen": "Primary at 18-20\u00b0C for 7-10 days; keep temperature steady early on for classic ester/phenol balance.",
+  "Kveik Fast Ferment": "Primary at 30-35\u00b0C (kveik tolerates and often prefers high temperatures) for 2-4 days \u2014 unusually fast, minimal off-flavours at these temps for this specific yeast family.",
 };
 
 const ACID_TYPES = ["Lactic Acid (88%)", "Phosphoric Acid (10%)", "Citric Acid", "Acid Malt (Sauermalz)"];
@@ -480,3 +487,44 @@ const MASH_PROFILES = {
   "BIAB, Full Body": [{ name: "Saccharification", temp: 154, time: 60 }],
   "Two-Step, Well Modified": [{ name: "Protein Rest", temp: 122, time: 15 }, { name: "Saccharification", temp: 152, time: 45 }],
 };
+
+// ---- Misc / Fining Agents ----
+// Not really region-specific (Whirlfloc is Whirlfloc everywhere), so everything is tagged
+// "Generic" - still uses the same origin field as FERMENTABLES/HOPS/YEASTS so it can reuse the
+// same catalogue-backed inventory machinery (the region filter just won't do much here).
+const MISC = [
+  { name: "Whirlfloc Tablet", unit: "tablet", use: "Boil", origin: "Generic" },
+  { name: "Irish Moss", unit: "tsp", use: "Boil", origin: "Generic" },
+  { name: "Gelatin (Finings)", unit: "tsp", use: "Bottling", origin: "Generic" },
+  { name: "Isinglass (Finings)", unit: "ml", use: "Bottling", origin: "Generic" },
+  { name: "Yeast Nutrient", unit: "tsp", use: "Boil", origin: "Generic" },
+  { name: "Yeast Energizer", unit: "tsp", use: "Boil", origin: "Generic" },
+  { name: "Campden Tablet (Potassium Metabisulfite)", unit: "tablet", use: "Mash", origin: "Generic" },
+  { name: "Citric Acid", unit: "g", use: "Mash", origin: "Generic" },
+  { name: "PH 5.2 Stabilizer", unit: "tsp", use: "Mash", origin: "Generic" },
+  { name: "Clarity Ferm (Brewers Clarex)", unit: "ml", use: "Fermentation", origin: "Generic" },
+  { name: "Amylase Enzyme", unit: "tsp", use: "Mash", origin: "Generic" },
+  { name: "Vanilla Beans", unit: "item", use: "Fermentation", origin: "Generic" },
+  { name: "Oak Chips", unit: "oz", use: "Fermentation", origin: "Generic" },
+  { name: "Cacao Nibs", unit: "oz", use: "Fermentation", origin: "Generic" },
+];
+
+// ---- Packaging / Vessel Sizes ----
+// Separate from brewing Equipment (mash tun/kettle sizing) - these are finished-beer
+// packaging vessels, referenced by the Batches "Bottling / Kegging" card so a brewer can pick
+// a standard size instead of typing an approximate volume every time. volGal is canonical.
+const PACKAGING_PRESETS = [
+  { name: "Cornelius Keg (5 gal)", volGal: 5 },
+  { name: "10L Keg", volGal: 2.6417 },
+  { name: "19L Keg (Sixth Barrel)", volGal: 5.0192 },
+  { name: "20L Keg", volGal: 5.2834 },
+  { name: "1/6 Barrel Keg (Sixtel, US)", volGal: 5.16 },
+  { name: "1/2 Barrel Keg (Sanke, US)", volGal: 15.5 },
+  { name: "750ml Bottle", volGal: 0.1982 },
+  { name: "500ml Bottle", volGal: 0.1321 },
+  { name: "330ml Bottle", volGal: 0.0872 },
+  { name: "12oz Bottle (US)", volGal: 0.09375 },
+  { name: "1L Growler", volGal: 0.2642 },
+  { name: "2L Growler", volGal: 0.5283 },
+  { name: "64oz Growler (US)", volGal: 0.5 },
+];

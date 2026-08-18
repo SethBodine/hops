@@ -32,11 +32,12 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
   built-in list: add an ingredient in Inventory and it shows up in the picker; type a
   brand-new name and it's added to Inventory automatically. **Save Item** works the same way,
   reading from and writing to that same list.
-- **World ingredient catalogue, by region** — hops, malts, and 199 yeast strains across all
-  the major labs (Fermentis, Lallemand, White Labs, Wyeast, Omega, Imperial Yeast, Mangrove
-  Jack's, Escarpment Labs) from New Zealand, Australia, the USA, UK, Germany, France, Canada,
-  Czech Republic, and Slovenia, each tagged with its country of origin. On the Inventory tab,
-  **+ Add Region** pulls in every catalogue item
+- **World ingredient catalogue, by region** — hops, malts, 199 yeast strains, and 14
+  misc/fining agents (Whirlfloc, Irish Moss, gelatin, Campden, PH 5.2 Stabilizer, etc., each
+  with its typical unit) across all the major labs (Fermentis, Lallemand, White Labs, Wyeast,
+  Omega, Imperial Yeast, Mangrove Jack's, Escarpment Labs) from New Zealand, Australia, the
+  USA, UK, Germany, France, Canada, Czech Republic, and Slovenia, each tagged with its country
+  of origin. On the Inventory tab, **+ Add Region** pulls in every catalogue item
   for a chosen country you don't already have, and **+ Add All Regions** pulls in the whole
   catalogue at once — both skip anything already tracked by name. A region filter (multiple
   regions at once, e.g. NZ + AU) hides the rest from view without removing anything; your
@@ -55,11 +56,17 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
 - **Recipe/folder tree** — unlimited nested folders, drag-and-drop to reorganise, right-click
   to clone/rename/delete/move a recipe or folder, folder notes.
 - **Batches** — separate from the recipe itself; track Planning → Brewing → Fermenting →
-  Completed. Log actual pre-boil gravity/volume, into-fermenter batch size, OG/FG, bottling
-  volume, and see estimated-vs-actual for gravity, ABV, attenuation, mash/brewhouse
-  efficiency, and calories. A fermentation readings log (date/temp/gravity, manual entry or
-  Tilt hydrometer CSV import) draws a gravity/temperature chart over the course of
-  fermentation. A carbonation section computes either keg PSI or bottle priming sugar for the
+  Completed. A dismissible banner suggests the next status once its data shows up (e.g. "Move
+  to Brewing?" once a pre-boil reading or measured OG is entered) — one click to accept, never
+  automatic. Every status change is also checked (softly — a heads-up if something looks
+  missing, never a hard block) before it goes through. Log the brew date, start/end times,
+  actual pre-boil gravity/volume, into-fermenter batch size, OG/FG, bottling volume, and see
+  estimated-vs-actual for gravity, ABV, attenuation, mash/brewhouse efficiency, and calories.
+  A fermentation readings log (date, time, temp/gravity, manual entry or Tilt hydrometer CSV
+  import) draws a gravity/temperature chart over the course of fermentation. **Deduct from
+  Inventory** is available once a batch reaches Brewing, and moving a batch to Completed
+  without having deducted prompts a reminder (Deduct Now / Ignore & Continue — never
+  forced). A carbonation section computes either keg PSI or bottle priming sugar for the
   batch's actual measured volume. **Rebrew** starts a fresh batch of the same recipe with one
   click. Every batch's history shows on the recipe's own "Brew History" tab so you can tweak
   the next version with real data.
@@ -67,9 +74,15 @@ recipe can be sent to (and opened straight into the app on) any phone or compute
   misc items, alongside each ingredient's own spec (alpha %, PPG, colour, attenuation), with
   a one-click "deduct from inventory" when you start brewing a batch.
 - **Equipment profiles** — reusable batch size / boil-off rate / trub loss / efficiency /
-  thermal-mass defaults, applied to any recipe from its Design tab.
+  thermal-mass defaults, applied to any recipe from its Design tab. **Packaging / Vessel
+  Sizes** (a separate, simpler profile list — kegs, growlers, bottles, both metric and
+  imperial) can be picked directly on a batch's Bottling/Kegging card to set its measured
+  volume in one click.
 - **Quick calculators** (Tools) — ABV from readings, priming sugar, hydrometer temperature
-  correction — for brew-day use without opening a full recipe.
+  correction, keg carbonation pressure, refractometer/Brix correction (accounts for alcohol
+  throwing off a raw Brix reading), boil-off/dilution (how much to boil off or top up to hit
+  a target gravity), yeast pitch rate & starter guidance, and a general unit converter
+  (weight/volume/temperature/gravity↔Plato) — for brew-day use without opening a full recipe.
 - **Recipe scaling** — rescale a whole recipe (including mash/sparge water) to a new batch
   size in one step.
 - **BeerXML import/export** — the standard format BeerSmith itself uses, so existing recipes
