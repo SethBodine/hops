@@ -84,6 +84,16 @@ function newBatch(recipeId) {
     suggestionDismissed: null, // status name the user last dismissed the "move to X?" banner for
   };
 }
+// A batch's name is always its linked recipe's *current* name - it's not an independent
+// identity, so it should never go stale when the recipe is renamed elsewhere. `recipeName`
+// on the batch object is kept only as a last-known fallback for the (rare) case the linked
+// recipe has since been deleted, and is refreshed opportunistically whenever we do have the
+// live recipe, so that fallback itself doesn't go stale over time either.
+function batchDisplayName(b) {
+  const r = state.recipes.find(x => x.id === b.recipeId);
+  if (r) { if (b.recipeName !== r.name) b.recipeName = r.name; return r.name; }
+  return (b.recipeName || "Unknown Recipe") + " (recipe deleted)";
+}
 // Backfill fields for batches saved before the measured-stats/fermentation-log feature existed.
 function migrateBatch(b) {
   if (b.measuredPreBoilGravity === undefined) b.measuredPreBoilGravity = null;
@@ -310,6 +320,60 @@ function showModal(innerHtml, onMount, extraClass) {
 }
 function closeModal() { const el = document.getElementById("modalOverlay"); if (el) el.remove(); }
 
+// ---- Confirm / prompt dialogs ----
+// Replacements for window.confirm()/window.prompt(), which render as native browser chrome
+// (a different look per browser, with the page URL in the title bar) and stick out next to
+// the app's own styled modals. These render through the same showModal()/.modal-box system
+// as everything else, so every in-app dialog looks and behaves consistently. Both return a
+// Promise so call sites can `await` them like the native versions.
+function showConfirmModal(title, bodyHtml, opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = v => { if (settled) return; settled = true; resolve(v); };
+    const confirmClass = opts.danger ? "btn btn-danger" : "btn btn-primary";
+    const html = '<h3>' + escapeHtml(title) + '</h3>' +
+      '<div class="modal-body-text">' + bodyHtml + '</div>' +
+      '<div class="modal-actions">' +
+      '<button class="btn" id="modalCancelBtn">' + escapeHtml(opts.cancelLabel || "Cancel") + '</button>' +
+      '<button class="' + confirmClass + '" id="modalConfirmBtn">' + escapeHtml(opts.confirmLabel || "OK") + '</button>' +
+      '</div>';
+    showModal(html, overlay => {
+      overlay.querySelector("#modalCancelBtn").addEventListener("click", () => { closeModal(); finish(false); });
+      overlay.querySelector("#modalConfirmBtn").addEventListener("click", () => { closeModal(); finish(true); });
+      overlay.addEventListener("click", e => { if (e.target === overlay) finish(false); });
+    });
+  });
+}
+function showPromptModal(title, label, initialValue, opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = v => { if (settled) return; settled = true; resolve(v); };
+    const fieldHtml = opts.multiline
+      ? '<textarea class="notes-area" id="modalPromptInput" placeholder="' + escapeHtml(opts.placeholder || "") + '">' + escapeHtml(initialValue || "") + '</textarea>'
+      : '<input type="text" id="modalPromptInput" value="' + escapeHtml(initialValue || "") + '" placeholder="' + escapeHtml(opts.placeholder || "") + '" maxlength="200"/>';
+    const html = '<h3>' + escapeHtml(title) + '</h3>' +
+      (opts.description ? '<p class="modal-body-text">' + escapeHtml(opts.description) + '</p>' : "") +
+      '<div class="field"><label>' + escapeHtml(label) + '</label>' + fieldHtml + '</div>' +
+      '<div class="modal-actions">' +
+      '<button class="btn" id="modalCancelBtn">Cancel</button>' +
+      '<button class="btn btn-primary" id="modalConfirmBtn">' + escapeHtml(opts.confirmLabel || "Save") + '</button>' +
+      '</div>';
+    showModal(html, overlay => {
+      const input = overlay.querySelector("#modalPromptInput");
+      input.focus();
+      if (input.select) input.select();
+      const submit = () => { const val = input.value; closeModal(); finish(val); };
+      const cancel = () => { closeModal(); finish(null); };
+      overlay.querySelector("#modalCancelBtn").addEventListener("click", cancel);
+      overlay.querySelector("#modalConfirmBtn").addEventListener("click", submit);
+      if (!opts.multiline) input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+      overlay.addEventListener("click", e => { if (e.target === overlay) finish(null); });
+    });
+  });
+}
+
 // ---- Context menu ----
 function showContextMenu(x, y, items) {
   closeContextMenu();
@@ -377,10 +441,10 @@ function promptImportRecipes(recipes, sourceLabel) {
   const matchCount = matches.filter(m => m.existing).length;
   showModal(
     '<h3>Import ' + recipes.length + " Recipe" + (recipes.length > 1 ? "s" : "") + '</h3>' +
-    '<p style="font-size:13px;color:var(--ink-dim);">via ' + escapeHtml(sourceLabel) + '. ' +
+    '<p style="font-size:var(--fs-base);color:var(--ink-dim);">via ' + escapeHtml(sourceLabel) + '. ' +
     (matchCount ? matchCount + " match" + (matchCount > 1 ? "" : "es") + " a recipe you already have; " : "") +
     (recipes.length - matchCount) + " new.</p>" +
-    '<ul style="font-size:12px;color:var(--ink-faint);max-height:160px;overflow-y:auto;margin:10px 0;padding-left:18px;">' +
+    '<ul style="font-size:var(--fs-sm);color:var(--ink-faint);max-height:160px;overflow-y:auto;margin:10px 0;padding-left:18px;">' +
     matches.map(m => "<li>" + escapeHtml(m.rec.name) + (m.existing ? ' <span style="color:var(--amber);">(matches your "' + escapeHtml(m.existing.name) + '")</span>' : "") + "</li>").join("") +
     "</ul>" +
     '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">' +
@@ -439,7 +503,7 @@ function promptImportBackup(parsed) {
   const eCount = (parsed.equipment || []).length;
   showModal(
     "<h3>Full Hops Backup Detected</h3>" +
-    '<p style="font-size:13px;color:var(--ink-dim);">' + rCount + " recipe(s), " + bCount + " batch(es), " + eCount + " equipment profile(s).</p>" +
+    '<p style="font-size:var(--fs-base);color:var(--ink-dim);">' + rCount + " recipe(s), " + bCount + " batch(es), " + eCount + " equipment profile(s).</p>" +
     '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">' +
     '<button class="btn" id="mergeRecipesBtn">Merge Recipes Only (keep my current batches/inventory/equipment)</button>' +
     '<button class="btn btn-danger" id="replaceAllBtn">Replace Everything on This Device</button>' +
@@ -452,8 +516,13 @@ function promptImportBackup(parsed) {
         if (!recipes.length) { toast("No recipes found in backup"); return; }
         promptImportRecipes(recipes, "backup file");
       });
-      overlay.querySelector("#replaceAllBtn").addEventListener("click", () => {
-        if (!confirm("This replaces every recipe, batch, folder, inventory item, and equipment profile currently stored in this browser with the contents of the backup file. This can't be undone. Continue?")) return;
+      overlay.querySelector("#replaceAllBtn").addEventListener("click", async () => {
+        const ok = await showConfirmModal(
+          "Replace Everything?",
+          "This replaces every recipe, batch, folder, inventory item, and equipment profile currently stored in this browser with the contents of the backup file. This can't be undone.",
+          { confirmLabel: "Replace Everything", danger: true }
+        );
+        if (!ok) return;
         const restored = Security.sanitizeDeep(parsed);
         (restored.recipes || []).forEach(migrateRecipe);
         (restored.batches || []).forEach(migrateBatch);
@@ -479,10 +548,10 @@ function promptImportBackup(parsed) {
 }
 
 // ---- Scale recipe ----
-function scaleRecipe(r) {
+async function scaleRecipe(r) {
   const label = Units.unitLabel("volume-gal", state.unitSystem);
   const currentDisplay = Units.toDisplay(r.batchVolGal, "volume-gal", state.unitSystem).toFixed(2);
-  const input = window.prompt('Scale "' + r.name + '" to a new batch size (' + label + '):', currentDisplay);
+  const input = await showPromptModal("Scale Recipe", "New batch size (" + label + ")", currentDisplay, { description: 'Scale "' + r.name + '" to a new batch size. All fermentables and hops are scaled proportionally.', confirmLabel: "Scale" });
   if (input === null) return;
   const newDisplay = Number(input);
   if (!newDisplay || newDisplay <= 0) { toast("Enter a valid batch size"); return; }
@@ -524,7 +593,7 @@ function updatePricesFromInventory(r) {
 // ---- Sharing ----
 function shareModalHtml(title, description, fullUrl) {
   return '<h3>' + title + '</h3>' +
-    '<p style="color:var(--ink-faint);font-size:13px;">' + description + '</p>' +
+    '<p class="hint-text">' + description + '</p>' +
     '<input class="share-link-input" id="shareLinkInput" readonly value="' + escapeHtml(fullUrl) + '"/>' +
     '<div style="display:flex;gap:8px;margin-top:12px;">' +
     '<button class="btn btn-primary" id="copyLinkBtn" style="flex:1;">Copy Link</button>' +
@@ -561,7 +630,7 @@ async function shareBatch(b) {
     const recipe = state.recipes.find(x => x.id === b.recipeId) || null;
     const encoded = await Share.encodeBatch(b, recipe);
     const fullUrl = Share.buildShareUrl(encoded);
-    showModal(shareModalHtml('Share Batch: "' + escapeHtml(b.recipeName) + '"',
+    showModal(shareModalHtml('Share Batch: "' + escapeHtml(batchDisplayName(b)) + '"',
       "This link contains the batch (status, readings, notes) and its recipe, so it opens with full context on any device \u2014 handy for building the brew day on a computer, then capturing notes and timings on a phone. Send the link back the same way to report changes.",
       fullUrl), overlay => wireShareModal(overlay, fullUrl));
   } catch (e) {
@@ -588,8 +657,8 @@ function handleIncomingRecipeShare(incoming) {
   showModal(
     '<h3>Shared Recipe</h3>' +
     '<p><strong>' + escapeHtml(incoming.name) + '</strong>' + (incoming.brewer ? " by " + escapeHtml(incoming.brewer) : "") + '</p>' +
-    (d ? '<p style="color:var(--ink-faint);font-size:13px;">OG ' + d.og.toFixed(3) + ' \u00b7 ' + d.abv.toFixed(1) + '% ABV \u00b7 ' + Math.round(d.ibu) + ' IBU</p>' : "") +
-    (existing ? '<p style="color:var(--amber);font-size:13px;">You already have a recipe with this ID: "' + escapeHtml(existing.name) + '".</p>' : "") +
+    (d ? '<p class="hint-text">OG ' + d.og.toFixed(3) + ' \u00b7 ' + d.abv.toFixed(1) + '% ABV \u00b7 ' + Math.round(d.ibu) + ' IBU</p>' : "") +
+    (existing ? '<p style="color:var(--amber);font-size:var(--fs-base);">You already have a recipe with this ID: "' + escapeHtml(existing.name) + '".</p>' : "") +
     '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">' +
     '<button class="btn btn-primary" id="addNewBtn" style="flex:1;">Add as New Recipe</button>' +
     (existing ? '<button class="btn" id="updateExistingBtn" style="flex:1;">Update Existing</button>' : "") +
@@ -626,9 +695,9 @@ function handleIncomingBatchShare(data) {
   showModal(
     '<h3>Shared Batch</h3>' +
     '<p><strong>' + escapeHtml(incomingBatch.recipeName) + '</strong> \u2014 ' + escapeHtml(incomingBatch.status) + ' \u00b7 ' + nzDate(incomingBatch.brewDate) + '</p>' +
-    (incomingBatch.notes ? '<p style="color:var(--ink-faint);font-size:13px;">"' + escapeHtml(incomingBatch.notes.slice(0, 140)) + (incomingBatch.notes.length > 140 ? "\u2026" : "") + '"</p>' : "") +
-    (!haveRecipe && incomingRecipe ? '<p style="color:var(--ink-faint);font-size:12px;">Its recipe ("' + escapeHtml(incomingRecipe.name) + '") will be added too, since you don\u2019t have it yet.</p>' : "") +
-    (existingBatch ? '<p style="color:var(--amber);font-size:13px;">You already have a batch with this ID.</p>' : "") +
+    (incomingBatch.notes ? '<p class="hint-text">"' + escapeHtml(incomingBatch.notes.slice(0, 140)) + (incomingBatch.notes.length > 140 ? "\u2026" : "") + '"</p>' : "") +
+    (!haveRecipe && incomingRecipe ? '<p class="hint-text">Its recipe ("' + escapeHtml(incomingRecipe.name) + '") will be added too, since you don\u2019t have it yet.</p>' : "") +
+    (existingBatch ? '<p style="color:var(--amber);font-size:var(--fs-base);">You already have a batch with this ID.</p>' : "") +
     '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">' +
     '<button class="btn btn-primary" id="addNewBatchBtn" style="flex:1;">Add as New Batch</button>' +
     (existingBatch ? '<button class="btn" id="updateExistingBatchBtn" style="flex:1;">Update Existing Batch</button>' : "") +
@@ -691,7 +760,8 @@ function renderSidebar() {
     newFolderBtn.style.display = "none";
     list.innerHTML = state.batches.length ? state.batches.map(b =>
       '<div class="recipe-item ' + (b.id === state.activeBatchId ? "active" : "") + '" data-id="' + b.id + '">' +
-      '<div class="name">' + escapeHtml(b.recipeName) + '</div>' +
+      '<div class="item-eyebrow">Batch</div>' +
+      '<div class="name">' + escapeHtml(batchDisplayName(b)) + '</div>' +
       '<div class="meta">' + escapeHtml(b.status) + ' \u00b7 ' + nzDate(b.brewDate) + '</div></div>'
     ).join("") : '<div class="empty-row" style="padding:24px 10px;">No batches yet</div>';
     list.querySelectorAll(".recipe-item").forEach(el => el.addEventListener("click", () => { state.activeBatchId = el.dataset.id; saveToStorage(); renderAll(); }));
@@ -769,20 +839,24 @@ function openTreeContextMenu(e, node, parent) {
       node.children.push(Tree.createFolder(uniqueSiblingName(node, "folder", "New Folder")));
       saveToStorage(); renderSidebar();
     }});
-    items.push({ label: "Rename Folder", action: () => {
-      const name = window.prompt("Folder name:", node.name);
+    items.push({ label: "Rename Folder", action: async () => {
+      const name = await showPromptModal("Rename Folder", "Folder name", node.name);
       if (name) {
         const parentNode = Tree.findParent(state.tree, node.id) || state.tree;
         Tree.renameNode(state.tree, node.id, uniqueSiblingName(parentNode, "folder", name, node.id));
         saveToStorage(); renderSidebar();
       }
     }});
-    items.push({ label: "Edit Notes", action: () => { const notes = window.prompt("Folder notes:", node.notes || ""); if (notes !== null) { node.notes = notes; saveToStorage(); } } });
+    items.push({ label: "Edit Notes", action: async () => {
+      const notes = await showPromptModal("Folder Notes", "Notes", node.notes || "", { multiline: true });
+      if (notes !== null) { node.notes = notes; saveToStorage(); }
+    }});
     if (node.id !== "root") {
       items.push({ divider: true });
-      items.push({ label: "Delete Folder & Contents", danger: true, action: () => {
+      items.push({ label: "Delete Folder & Contents", danger: true, action: async () => {
         const count = Tree.countRecipes(node);
-        if (!confirm('Delete "' + node.name + '"' + (count ? " and its " + count + " recipe(s)" : "") + "? This can't be undone.")) return;
+        const ok = await showConfirmModal("Delete Folder?", 'Delete "' + escapeHtml(node.name) + '"' + (count ? " and its " + count + " recipe(s)" : "") + "? This can't be undone.", { confirmLabel: "Delete", danger: true });
+        if (!ok) return;
         const recipeIds = new Set();
         (function collect(n) { if (n.type === "recipe") recipeIds.add(n.recipeId); else n.children.forEach(collect); })(node);
         state.recipes = state.recipes.filter(r => !recipeIds.has(r.id));
@@ -804,8 +878,8 @@ function openTreeContextMenu(e, node, parent) {
         parentNode.children.push(Tree.createLeaf(copy.id));
         state.activeId = copy.id; saveToStorage(); renderAll(); toast("Recipe cloned");
       }});
-      items.push({ label: "Rename", action: () => {
-        const name = window.prompt("Recipe name:", r.name);
+      items.push({ label: "Rename", action: async () => {
+        const name = await showPromptModal("Rename Recipe", "Recipe name", r.name);
         if (name) {
           const leaf = Tree.findLeafByRecipeId(state.tree, r.id);
           const parentNode = (leaf && Tree.findParent(state.tree, leaf.id)) || state.tree;
@@ -815,8 +889,9 @@ function openTreeContextMenu(e, node, parent) {
       }});
       items.push({ label: "Share Link", action: () => shareRecipe(r) });
       items.push({ divider: true });
-      items.push({ label: "Delete", danger: true, action: () => {
-        if (!confirm('Delete "' + r.name + '"? This can\'t be undone.')) return;
+      items.push({ label: "Delete", danger: true, action: async () => {
+        const ok = await showConfirmModal("Delete Recipe?", 'Delete "' + escapeHtml(r.name) + '"? This can\'t be undone.', { confirmLabel: "Delete", danger: true });
+        if (!ok) return;
         state.recipes = state.recipes.filter(x => x.id !== r.id);
         Tree.removeNode(state.tree, node.id);
         if (state.activeId === r.id) state.activeId = (state.recipes[0] && state.recipes[0].id) || null;
@@ -888,8 +963,9 @@ function renderRecipesMain(main) {
   });
   document.getElementById("exportXmlBtn").addEventListener("click", () => exportBeerXML(r));
   document.getElementById("exportOneBtn").addEventListener("click", () => exportOneRecipe(r));
-  document.getElementById("deleteBtn").addEventListener("click", () => {
-    if (!confirm('Delete "' + r.name + '"? This can\'t be undone.')) return;
+  document.getElementById("deleteBtn").addEventListener("click", async () => {
+    const ok = await showConfirmModal("Delete Recipe?", 'Delete "' + escapeHtml(r.name) + '"? This can\'t be undone.', { confirmLabel: "Delete", danger: true });
+    if (!ok) return;
     const leaf = Tree.findLeafByRecipeId(state.tree, r.id);
     if (leaf) Tree.removeNode(state.tree, leaf.id);
     state.recipes = state.recipes.filter(x => x.id !== r.id);
@@ -954,7 +1030,7 @@ function runRecipeChecks(r, d, style) {
   const html = '<h3>Run Checks: \u201c' + escapeHtml(r.name) + '\u201d</h3>' +
     (checks.length === 0
       ? '<p style="color:var(--ink-dim);">\u2705 No issues found \u2014 this recipe looks ready to brew.</p>'
-      : '<p style="color:var(--ink-faint);font-size:13px;">' + checks.length + ' item' + (checks.length > 1 ? "s" : "") + ' worth a look before brew day:</p>' +
+      : '<p class="hint-text">' + checks.length + ' item' + (checks.length > 1 ? "s" : "") + ' worth a look before brew day:</p>' +
         section("error", "Needs fixing") + section("warning", "Worth checking") + section("info", "For your information")) +
     '<div style="margin-top:14px;"><button class="btn btn-primary" id="closeChecksBtn" style="width:100%;">Close</button></div>';
   showModal(html, overlay => { overlay.querySelector("#closeChecksBtn").addEventListener("click", closeModal); });
@@ -1034,7 +1110,7 @@ function designTabHtml(r, style) {
     '<div class="field"><label>Attenuation (%)</label><input type="number" step="1" data-field="yeastAttenuation" value="' + (r.yeast.attenuation * 100).toFixed(0) + '"/></div>' +
     '<div class="field"><label>Target Final Gravity' + (style ? ' <button class="btn btn-sm" data-action="matchStyleFg" title="Set to the middle of ' + escapeHtml(style.name) + '\u2019s FG range" style="padding:0 6px;">Match Style</button>' : "") + '</label><input type="number" step="0.001" data-field="targetFg" value="' + d.fg.toFixed(3) + '"/></div>' +
     '<div class="field"><label>Cost ($)</label><input type="number" step="0.01" data-field="yeastCost" value="' + (r.yeast.cost || 0) + '"/></div>' +
-    '</div><p style="color:var(--ink-faint);font-size:12px;margin:6px 0 0;">Final gravity isn\u2019t pulled from the style automatically \u2014 it\u2019s calculated from Original Gravity and yeast Attenuation. Type a number into Target Final Gravity (or hit Match Style, once a style is picked above) and Attenuation is worked out backwards to hit it.</p></div>' +
+    '</div><p class="hint-text" style="margin:6px 0 0;">Final gravity isn\u2019t pulled from the style automatically \u2014 it\u2019s calculated from Original Gravity and yeast Attenuation. Type a number into Target Final Gravity (or hit Match Style, once a style is picked above) and Attenuation is worked out backwards to hit it.</p></div>' +
     '<div class="card"><h3>Misc / Fining Agents <button class="btn btn-sm" data-action="addMisc">+ Add Item</button></h3>' +
     '<table class="ing-table"><thead><tr><th style="width:34%">Name</th><th>Amount</th><th>Unit</th><th>Use</th><th>Cost ($)</th><th></th></tr></thead><tbody>' + miscRows + '</tbody></table></div>' +
     '<div class="card"><h3>Cost & Batch Stats</h3><div class="field-grid">' +
@@ -1044,7 +1120,7 @@ function designTabHtml(r, style) {
     '<div class="stat-row"><span class="stat-label">' + (uLabel("weight-lb") === "kg" ? "Kilograms" : "Pounds") + ' per Barrel</span><span class="stat-value lb-per-barrel">' + uVal(d.poundsPerBarrel, "weight-lb").toFixed(2) + '</span></div>' +
     '<div class="stat-row"><span class="stat-label">Total Recipe Cost</span><span class="stat-value total-cost">$' + d.cost.toFixed(2) + '</span></div>' +
     '</div>' +
-    '<div class="card"><h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p style="color:var(--ink-faint);font-size:13px;">Pick a style above to compare.</p>') + '</div>'
+    '<div class="card"><h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p class="hint-text">Pick a style above to compare.</p>') + '</div>'
   );
 }
 
@@ -1135,7 +1211,7 @@ function waterTabHtml(r, d) {
   const t = r.waterTarget;
   const ionInputs = ["Ca", "Mg", "Na", "SO4", "Cl", "HCO3"].map(ion =>
     '<div class="ion-box"><div class="ion-name">' + ion + '</div>' +
-    '<input type="number" step="1" data-field="waterBase.' + ion + '" value="' + (r.waterBase[ion] || 0) + '" style="width:100%;text-align:center;background:transparent;border:none;color:var(--amber);font-family:\'JetBrains Mono\',monospace;font-size:17px;margin-top:4px;"/></div>'
+    '<input type="number" step="1" class="ion-input" data-field="waterBase.' + ion + '" value="' + (r.waterBase[ion] || 0) + '"/></div>'
   ).join("");
   const adjustedIons = ["Ca", "Mg", "Na", "SO4", "Cl", "HCO3"].map(ion =>
     '<div class="ion-box"><div class="ion-name">' + ion + '</div><div class="ion-value" data-ion-group="mash" data-ion="' + ion + '">' + Math.round(d.finalWater[ion]) + '</div></div>'
@@ -1153,7 +1229,7 @@ function waterTabHtml(r, d) {
   const acidTypeOptions = sel => ACID_TYPES.map(a => '<option ' + (sel === a ? "selected" : "") + '>' + a + '</option>').join("");
 
   return (
-    '<div class="card"><h3>Base Water Profile</h3><p style="color:var(--ink-faint);font-size:12px;margin:-6px 0 10px;">Your source water, before any salts or acid additions \u2014 edit the ion values directly below.</p><div class="field-grid">' +
+    '<div class="card"><h3>Base Water Profile</h3><p class="hint-text" style="margin:-6px 0 10px;">Your source water, before any salts or acid additions \u2014 edit the ion values directly below.</p><div class="field-grid">' +
     '<div class="field"><label>Source Name</label><input data-field="waterBaseName" value="' + escapeHtml(r.waterBaseName) + '"/></div>' +
     '<div class="field"><label>Mash Water (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="mashWaterVolGal" data-unitkind="volume-gal" value="' + uVal(r.mashWaterVolGal, "volume-gal") + '"/></div>' +
     '<div class="field"><label>Sparge Water (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" data-field="spargeWaterVolGal" data-unitkind="volume-gal" value="' + uVal(r.spargeWaterVolGal, "volume-gal") + '"/></div>' +
@@ -1161,16 +1237,16 @@ function waterTabHtml(r, d) {
     '</div><div class="ion-grid" style="margin-top:14px;">' + ionInputs + '</div></div>' +
     '<div class="card"><h3>Mash & Sparge Water Agents<span><select id="targetProfileSelect" class="btn btn-sm">' + targetOptions + '</select>' +
     '<button class="btn btn-sm" data-action="addSalt">+ Add Salt</button></span></h3>' +
-    '<p style="color:var(--ink-faint);font-size:12px;margin:-2px 0 10px;">Each salt\u2019s <strong>Use</strong> determines which profile below it affects \u2014 Mash-use salts adjust the Mash profile, Sparge-use salts adjust the Sparge profile.</p>' +
+    '<p class="hint-text" style="margin:-2px 0 10px;">Each salt\u2019s <strong>Use</strong> determines which profile below it affects \u2014 Mash-use salts adjust the Mash profile, Sparge-use salts adjust the Sparge profile.</p>' +
     '<table class="ing-table"><thead><tr><th style="width:36%">Salt</th><th>Amount (g)</th><th>Use</th><th></th></tr></thead><tbody>' + saltRows + '</tbody></table></div>' +
     '<div class="card"><h3>Acid Additions</h3><div class="field-grid">' +
     '<div class="field"><label>Mash Acid</label><select data-field="mashAcid.type">' + acidTypeOptions(r.mashAcid.type) + '</select></div>' +
     '<div class="field"><label>Mash Acid Amount (mL)</label><input type="number" step="0.1" data-field="mashAcid.amountMl" value="' + r.mashAcid.amountMl + '"/></div>' +
     '<div class="field"><label>Sparge Acid</label><select data-field="spargeAcid.type">' + acidTypeOptions(r.spargeAcid.type) + '</select></div>' +
     '<div class="field"><label>Sparge Acid Amount (mL)</label><input type="number" step="0.1" data-field="spargeAcid.amountMl" value="' + r.spargeAcid.amountMl + '"/></div>' +
-    '</div><p style="color:var(--ink-faint);font-size:12px;margin:10px 0 0;">Tracked for reference only \u2014 not currently factored into the residual alkalinity estimate below (proper mash pH prediction needs a grain-acidity model beyond what Hops calculates).</p></div>' +
-    '<div class="card"><h3>Adjusted Mash Water Profile <span style="font-weight:400;color:var(--ink-faint);font-size:12px;">(calculated \u2014 base + Mash-use salts)</span></h3><div class="ion-grid">' + adjustedIons + '</div></div>' +
-    '<div class="card"><h3>Adjusted Sparge Water Profile <span style="font-weight:400;color:var(--ink-faint);font-size:12px;">(calculated \u2014 base + Sparge-use salts)</span></h3><div class="ion-grid">' + adjustedSpargeIons + '</div></div>' +
+    '</div><p class="hint-text" style="margin:10px 0 0;">Tracked for reference only \u2014 not currently factored into the residual alkalinity estimate below (proper mash pH prediction needs a grain-acidity model beyond what Hops calculates).</p></div>' +
+    '<div class="card"><h3>Adjusted Mash Water Profile <span style="font-weight:400;color:var(--ink-faint);font-size:var(--fs-sm);">(calculated \u2014 base + Mash-use salts)</span></h3><div class="ion-grid">' + adjustedIons + '</div></div>' +
+    '<div class="card"><h3>Adjusted Sparge Water Profile <span style="font-weight:400;color:var(--ink-faint);font-size:var(--fs-sm);">(calculated \u2014 base + Sparge-use salts)</span></h3><div class="ion-grid">' + adjustedSpargeIons + '</div></div>' +
     '<div class="card"><h3>Water Analysis (Mash Water)</h3>' +
     '<div class="stat-row"><span class="stat-label">Residual Alkalinity</span><span class="stat-value stat-ra">' + d.ra.toFixed(1) + ' ppm as CaCO3</span></div>' +
     '<div class="stat-row"><span class="stat-label">Alkalinity</span><span class="stat-value stat-alk">' + d.alkalinity.toFixed(1) + ' ppm as CaCO3</span></div>' +
@@ -1199,9 +1275,9 @@ function mashTabHtml(r, d) {
     '<div style="margin-top:16px;">' + steps + '<button class="btn btn-sm add-row-btn" data-action="addMashStep">+ Add Mash Step</button></div></div>' +
     '<div class="card"><h3>Strike Water</h3><div class="field-grid">' +
     '<div class="field"><label>Grain Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" data-field="grainTempF" data-unitkind="temp-f" value="' + uVal(r.grainTempF, "temp-f") + '"/></div>' +
-    '<div class="field" style="display:flex; align-items:flex-end; gap:6px; padding-bottom:6px;"><label style="display:flex; align-items:center; gap:6px; margin:0; text-transform:none; font-size:13px; color:var(--ink);" title="' + (equip ? "" : "Link an Equipment Profile on the Design tab to enable this") + '"><input type="checkbox" id="adjustTempForEquip" ' + (r.adjustTempForEquip ? "checked" : "") + ' ' + (equip ? "" : "disabled") + ' title="' + (equip ? "" : "Link an Equipment Profile on the Design tab to enable this") + '"/> Adjust Temp for Equipment</label></div>' +
+    '<div class="field" style="display:flex; align-items:flex-end; gap:6px; padding-bottom:6px;"><label style="display:flex; align-items:center; gap:6px; margin:0; text-transform:none; font-size:var(--fs-base); color:var(--ink);" title="' + (equip ? "" : "Link an Equipment Profile on the Design tab to enable this") + '"><input type="checkbox" id="adjustTempForEquip" ' + (r.adjustTempForEquip ? "checked" : "") + ' ' + (equip ? "" : "disabled") + ' title="' + (equip ? "" : "Link an Equipment Profile on the Design tab to enable this") + '"/> Adjust Temp for Equipment</label></div>' +
     '</div>' +
-    (equip ? "" : '<p style="color:var(--ink-faint);font-size:12px;margin:6px 0 0;">Link an Equipment Profile on the Design tab to enable the equipment thermal-mass adjustment.</p>') +
+    (equip ? "" : '<p class="hint-text" style="margin:6px 0 0;">Link an Equipment Profile on the Design tab to enable the equipment thermal-mass adjustment.</p>') +
     '<div class="stat-row" style="margin-top:8px;"><span class="stat-label">Water : Grain Ratio</span><span class="stat-value stat-ratio">' + d.ratioQtPerLb.toFixed(2) + ' qt/lb</span></div>' +
     '<div class="stat-row"><span class="stat-label">Calculated Strike Temp</span><span class="stat-value stat-striketemp">' + uVal(d.strikeTempF, "temp-f").toFixed(1) + ' ' + uLabel("temp-f") + '</span></div>' +
     '</div>' +
@@ -1227,7 +1303,7 @@ function historyTabHtml(r) {
   return (
     '<div class="card"><h3>Brew History <button class="btn btn-sm" data-action="startBatchFromRecipe">+ Start New Batch</button></h3>' +
     (batches.length ? '<table class="ing-table"><thead><tr><th>Date</th><th>Status</th><th>Measured OG</th><th>Measured FG</th><th>Notes</th></tr></thead><tbody>' + rows + '</tbody></table>' :
-      '<p style="color:var(--ink-faint);font-size:13px;">No brews logged yet for this recipe. Start a batch to track brew-day readings, and use what you learn to tweak the next version.</p>') +
+      '<p class="hint-text">No brews logged yet for this recipe. Start a batch to track brew-day readings, and use what you learn to tweak the next version.</p>') +
     '</div>'
   );
 }
@@ -1401,7 +1477,7 @@ function openIngredientPicker(kind, library, currentName, allowCustom, onSelect)
         '</div>'
       ).join("");
     });
-    return anyMatch ? html : '<p style="color:var(--ink-faint);font-size:13px;padding:8px 2px;">No matches.</p>';
+    return anyMatch ? html : '<p style="color:var(--ink-faint);font-size:var(--fs-base);padding:8px 2px;">No matches.</p>';
   };
   const title = { style: "Choose a Style", fermentables: "Choose a Fermentable", hops: "Choose a Hop", yeast: "Choose a Yeast Strain", misc: "Choose a Misc / Fining Item" }[kind];
   const html =
@@ -1423,9 +1499,9 @@ function openIngredientPicker(kind, library, currentName, allowCustom, onSelect)
     searchEl.addEventListener("input", () => { listEl.innerHTML = renderList(searchEl.value); wireRows(); });
     searchEl.focus();
     const customBtn = overlay.querySelector("[data-picker-custom]");
-    if (customBtn) customBtn.addEventListener("click", () => {
-      const name = window.prompt("Custom " + (kind === "fermentables" ? "fermentable" : kind === "hops" ? "hop" : kind === "misc" ? "misc/fining item" : "yeast strain") + " name:");
-      closeModal();
+    if (customBtn) customBtn.addEventListener("click", async () => {
+      const kindLabel = kind === "fermentables" ? "fermentable" : kind === "hops" ? "hop" : kind === "misc" ? "misc/fining item" : "yeast strain";
+      const name = await showPromptModal("Custom " + kindLabel, "Name", "", { confirmLabel: "Add" });
       if (name) onSelect(name);
     });
   }, "picker-modal");
@@ -1523,7 +1599,7 @@ function refreshComputed(r) {
     const headers = Array.from(document.querySelectorAll(".card h3")).filter(h => h.textContent.indexOf("Style Guide") === 0);
     if (headers[0]) {
       const styleCard = headers[0].closest(".card");
-      styleCard.innerHTML = '<h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p style="color:var(--ink-faint);font-size:13px;">Pick a style above to compare.</p>');
+      styleCard.innerHTML = '<h3>Style Guide Comparison</h3>' + (style ? styleCompareHtml(r, style) : '<p class="hint-text">Pick a style above to compare.</p>');
       if (style) wireStyleOverrideEvents(styleCard, r);
     }
     document.querySelectorAll(".grist-pct").forEach((el, i) => { if (d.grainPercents[i] != null) el.textContent = d.grainPercents[i].toFixed(1) + "%"; });
@@ -1602,7 +1678,7 @@ function renderBatchesMain(main) {
   const showSuggestBanner = suggested && b.suggestionDismissed !== suggested;
 
   main.innerHTML =
-    '<div class="recipe-header"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><h1 class="display" style="margin:0;font-size:28px;">' + escapeHtml(b.recipeName) + '</h1>' + ageBadge + '</div><div class="header-actions"><button class="btn btn-sm" id="rebrewBtn" title="Start a fresh batch of the same recipe">Rebrew</button><button class="btn btn-sm" id="shareBatchBtn">Share</button><button class="btn btn-sm btn-danger" id="deleteBatchBtn">Delete Batch</button></div></div>' +
+    '<div class="recipe-header"><div><div class="item-eyebrow">Batch \u00b7 Brew Day</div><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><h1 class="display" style="margin:0;font-size:var(--fs-display-sm);">' + escapeHtml(batchDisplayName(b)) + '</h1>' + ageBadge + '</div></div><div class="header-actions"><button class="btn btn-sm" id="rebrewBtn" title="Start a fresh batch of the same recipe">Rebrew</button><button class="btn btn-sm" id="shareBatchBtn">Share</button><button class="btn btn-sm btn-danger" id="deleteBatchBtn">Delete Batch</button></div></div>' +
     (showSuggestBanner ? '<div class="suggest-banner"><span class="suggest-icon">\ud83d\udca1</span><span class="suggest-text">This batch looks like it\u2019s moved on \u2014 move to <strong>' + suggested + '</strong>?</span><div class="suggest-actions"><button class="btn btn-sm btn-primary" id="acceptSuggestBtn">Move to ' + suggested + '</button><button class="btn btn-sm" id="dismissSuggestBtn">Not now</button></div></div>' : "") +
     '<div class="card"><h3>Status</h3><div style="display:flex; gap:8px; flex-wrap:wrap;">' + statusBtns + '</div></div>' +
     '<div class="card"><h3>Brew Day</h3><div class="field-grid">' +
@@ -1648,7 +1724,7 @@ function renderBatchesMain(main) {
         '<td><input type="number" step="0.001" data-rfield="gravity" value="' + (fr.gravity != null ? fr.gravity : "") + '"/></td>' +
         '<td><input type="text" data-rfield="notes" value="' + escapeHtml(fr.notes || "") + '" placeholder="e.g. krausen dropped"/></td>' +
         '<td><button class="del-btn" data-del-reading="' + fr.id + '">\u2715</button></td></tr>'
-      ).join("") + '</tbody></table>' : '<p style="color:var(--ink-faint);font-size:13px;">No readings yet \u2014 add one manually or import a Tilt hydrometer CSV export.</p>') +
+      ).join("") + '</tbody></table>' : '<p class="hint-text">No readings yet \u2014 add one manually or import a Tilt hydrometer CSV export.</p>') +
     '</div>' +
     '<div class="card"><h3>Bottling / Kegging</h3><div class="field-grid">' +
     '<div class="field"><label>Vessel Size</label><select id="vesselSizeSelect"><option value="">\u2014 pick a vessel to set volume \u2014</option>' + state.packaging.map(p => '<option value="' + p.id + '">' + escapeHtml(p.name) + ' (' + uVal(p.volGal, "volume-gal").toFixed(2) + ' ' + uLabel("volume-gal") + ')</option>').join("") + '</select></div>' +
@@ -1667,8 +1743,9 @@ function renderBatchesMain(main) {
   }
   document.getElementById("shareBatchBtn").addEventListener("click", () => shareBatch(b));
   document.getElementById("rebrewBtn").addEventListener("click", () => rebrewBatch(b));
-  document.getElementById("deleteBatchBtn").addEventListener("click", () => {
-    if (!confirm("Delete this batch record?")) return;
+  document.getElementById("deleteBatchBtn").addEventListener("click", async () => {
+    const ok = await showConfirmModal("Delete Batch?", "Delete this batch record? This can't be undone.", { confirmLabel: "Delete", danger: true });
+    if (!ok) return;
     state.batches = state.batches.filter(x => x.id !== b.id);
     state.activeBatchId = state.batches.length ? state.batches[0].id : null;
     saveToStorage(); renderAll();
@@ -1766,13 +1843,13 @@ function attemptStatusChange(b, r, newStatus) {
   // and "Ignore" vs "Deduct Now" are both reasonable, so it deserves real buttons instead of a
   // single OK/Cancel.
   if (newStatus === "Completed" && !b.inventoryDeducted) {
-    const missingHtml = missing.length ? '<ul style="color:var(--ink-dim);font-size:13px;margin:8px 0 0;padding-left:20px;">' + missing.map(m => "<li>" + escapeHtml(m) + "</li>").join("") + "</ul>" : "";
+    const missingHtml = missing.length ? '<ul>' + missing.map(m => "<li>" + escapeHtml(m) + "</li>").join("") + "</ul>" : "";
     showModal(
       '<h3>Before marking this batch Completed</h3>' +
-      '<p style="color:var(--ink-dim);font-size:13px;">This batch\u2019s ingredients haven\u2019t been deducted from inventory yet \u2014 don\u2019t forget!</p>' + missingHtml +
-      '<div style="display:flex;gap:8px;margin-top:16px;">' +
-      '<button class="btn btn-primary" id="deductNowBtn" style="flex:1;">Deduct Now</button>' +
-      '<button class="btn" id="ignoreDeductBtn" style="flex:1;">Ignore &amp; Continue</button>' +
+      '<div class="modal-body-text"><p>This batch\u2019s ingredients haven\u2019t been deducted from inventory yet \u2014 don\u2019t forget!</p>' + missingHtml + '</div>' +
+      '<div class="modal-actions">' +
+      '<button class="btn" id="ignoreDeductBtn">Ignore &amp; Continue</button>' +
+      '<button class="btn btn-primary" id="deductNowBtn">Deduct Now</button>' +
       '</div>',
       overlay => {
         overlay.querySelector("#deductNowBtn").addEventListener("click", () => { closeModal(); deductInventoryForBatch(r, b); commit(); });
@@ -1785,7 +1862,12 @@ function attemptStatusChange(b, r, newStatus) {
   if (missing.length) {
     // Soft warning only - OK proceeds without requiring the missing data to be filled in first,
     // Cancel (or clicking outside) just stays on the current status.
-    if (!confirm("Before moving to " + newStatus + ":\n\n" + missing.map(m => "\u2022 " + m).join("\n") + "\n\nContinue anyway?")) return;
+    showConfirmModal(
+      "Before moving to " + newStatus,
+      "<ul>" + missing.map(m => "<li>" + escapeHtml(m) + "</li>").join("") + "</ul><p>Continue anyway?</p>",
+      { confirmLabel: "Continue" }
+    ).then(ok => { if (ok) commit(); });
+    return;
   }
   commit();
 }
@@ -1889,11 +1971,11 @@ const CATALOGUE_KINDS = ["fermentables", "hops", "yeast", "misc"]; // kinds back
 function renderInventoryMain(main) {
   const allShown = state.inventoryRegionFilter.length === 0;
   const filterChips = REGIONS.map(r => '<button class="btn btn-sm" data-region-chip="' + escapeHtml(r) + '" style="' + (state.inventoryRegionFilter.includes(r) ? "background:var(--amber);color:#fff;border-color:var(--amber);" : "") + '">' + escapeHtml(r) + '</button>').join("");
-  main.innerHTML = '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">Inventory</h1></div>' +
-    '<p style="color:var(--ink-faint); font-size:13px; margin:0 0 10px;"><strong>Every recipe\u2019s Fermentables/Hops/Yeast dropdown always lists your entire inventory, from every region \u2014 the filter below only changes what\u2019s shown on this page.</strong> Add an ingredient here and it shows up in every recipe; type a brand-new name into a recipe and it\u2019s added here. \u201c+ Add Region\u201d pulls in the built-in specs for a country\u2019s hops/malts/yeast (there\u2019s no live database behind this \u2014 see REFRESH_CATALOGUE.md).</p>' +
+  main.innerHTML = '<div class="recipe-header"><h1 class="display page-title">Inventory</h1></div>' +
+    '<p class="hint-text" style="margin:0 0 10px;"><strong>Every recipe\u2019s Fermentables/Hops/Yeast dropdown always lists your entire inventory, from every region \u2014 the filter below only changes what\u2019s shown on this page.</strong> Add an ingredient here and it shows up in every recipe; type a brand-new name into a recipe and it\u2019s added here. \u201c+ Add Region\u201d pulls in the built-in specs for a country\u2019s hops/malts/yeast (there\u2019s no live database behind this \u2014 see REFRESH_CATALOGUE.md).</p>' +
     '<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:16px;">' +
     '<button class="btn btn-sm" data-region-chip="__all__" style="' + (allShown ? "background:var(--amber);color:#fff;border-color:var(--amber);" : "") + '">Show Everything</button>' +
-    '<span style="color:var(--ink-faint);font-size:13px;">or just:</span>' + filterChips + '</div>' +
+    '<span class="hint-text">or just:</span>' + filterChips + '</div>' +
     INVENTORY_KINDS.map(pair => inventoryCardHtml(pair[0], pair[1])).join("");
 
   main.querySelectorAll("[data-region-chip]").forEach(btn => btn.addEventListener("click", (e) => {
@@ -1960,7 +2042,7 @@ function inventoryCardHtml(kind, label) {
     : "";
   const hiddenCount = state.inventory[kind].length - visible.length;
   const hiddenNote = hiddenCount > 0
-    ? '<p style="color:var(--ink-faint); font-size:12px; margin:6px 0 0;">' + hiddenCount + ' more item(s) hidden by the filter above \u2014 <a href="#" data-region-chip="__all__" style="color:var(--amber);">show everything</a>.</p>'
+    ? '<p class="hint-text" style="margin:6px 0 0;">' + hiddenCount + ' more item(s) hidden by the filter above \u2014 <a href="#" data-region-chip="__all__" style="color:var(--amber);">show everything</a>.</p>'
     : "";
   return '<div class="card"><h3>' + label + ' <span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;">' + regionControls + ' <button class="btn btn-sm" data-add-kind="' + kind + '">+ Add Item</button></span></h3>' +
     '<table class="ing-table"><thead><tr><th style="width:22%">Name</th>' + originHeader + specHeaders + '<th>Stock</th><th>Unit</th><th>Cost / unit ($)</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' + hiddenNote + '</div>';
@@ -1991,7 +2073,10 @@ function inventoryRowHtml(kind, item, i) {
 
 // ================= EQUIPMENT =================
 function renderEquipmentMain(main) {
-  main.innerHTML = '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">Equipment Profiles</h1><div class="header-actions"><button class="btn btn-primary btn-sm" id="addEquipBtn">+ New Profile</button></div></div>' +
+  main.innerHTML = '<div class="recipe-header"><h1 class="display page-title">Equipment &amp; Packaging</h1></div>' +
+    '<h2 class="section-heading">Brewing Equipment</h2>' +
+    '<p class="hint-text">Mash tun / kettle specs for your system \u2014 link a profile to any recipe from its <strong>Design</strong> tab to drive batch-size, boil-off, trub loss, and efficiency calculations.</p>' +
+    '<div class="header-actions" style="margin-bottom:14px;"><button class="btn btn-primary btn-sm" id="addEquipBtn">+ New Equipment Profile</button></div>' +
     (state.equipment.length ? state.equipment.map((e, i) =>
       '<div class="card" data-idx="' + i + '"><h3>' + escapeHtml(e.name) + ' <button class="btn btn-sm btn-danger" data-del-equip="' + i + '">Delete</button></h3><div class="field-grid">' +
       '<div class="field"><label>Name</label><input data-efield="name" value="' + escapeHtml(e.name) + '"/></div>' +
@@ -2016,15 +2101,17 @@ function renderEquipmentMain(main) {
   main.querySelectorAll("[data-del-equip]").forEach(btn => btn.addEventListener("click", () => { state.equipment.splice(Number(btn.dataset.delEquip), 1); saveToStorage(); renderMain(); }));
 
   // ---- Packaging / Vessel Sizes ----
-  const packagingHtml = '<div class="card"><h3>Packaging / Vessel Sizes <button class="btn btn-sm" id="addPackagingBtn">+ Add Vessel</button></h3>' +
-    '<p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Referenced by the Bottling/Kegging card on any Batch \u2014 pick a vessel there instead of typing an approximate volume.</p>' +
+  const packagingHtml = '<hr class="section-divider"/>' +
+    '<h2 class="section-heading">Packaging &amp; Vessels</h2>' +
+    '<p class="hint-text">Bottle/keg sizes \u2014 separate from Brewing Equipment above. Referenced by the Bottling/Kegging card on any <strong>Batch</strong>, so you can pick a vessel there instead of typing an approximate volume.</p>' +
+    '<div class="card"><h3>Vessel Sizes <button class="btn btn-sm" id="addPackagingBtn">+ Add Vessel</button></h3>' +
     (state.packaging.length ? '<table class="ing-table"><thead><tr><th style="width:60%">Name</th><th>Volume (' + uLabel("volume-gal") + ')</th><th></th></tr></thead><tbody>' +
       state.packaging.map((p, i) =>
         '<tr data-pidx="' + i + '">' +
         '<td><input data-pfield="name" value="' + escapeHtml(p.name) + '"/></td>' +
         '<td><input type="number" step="0.01" data-pfield="volGal" data-unitkind="volume-gal" value="' + uVal(p.volGal, "volume-gal") + '"/></td>' +
         '<td><button class="del-btn" data-del-packaging="' + i + '">\u2715</button></td></tr>'
-      ).join("") + '</tbody></table>' : '<p style="color:var(--ink-faint);font-size:13px;">No vessel sizes yet.</p>') +
+      ).join("") + '</tbody></table>' : '<p class="hint-text">No vessel sizes yet.</p>') +
     '</div>';
   main.insertAdjacentHTML("beforeend", packagingHtml);
   document.getElementById("addPackagingBtn").addEventListener("click", () => { state.packaging.push(newPackaging({ name: "New Vessel", volGal: 5 })); saveToStorage(); renderMain(); });
@@ -2044,7 +2131,7 @@ function renderEquipmentMain(main) {
 // ================= TOOLS =================
 function renderToolsMain(main) {
   main.innerHTML =
-    '<div class="recipe-header"><h1 class="display" style="margin:0;font-size:28px;">Quick Calculators</h1></div>' +
+    '<div class="recipe-header"><h1 class="display page-title">Quick Calculators</h1></div>' +
     '<div class="card"><h3>ABV from Readings</h3><div class="field-grid">' +
     '<div class="field"><label>Original Gravity</label><input type="number" step="0.001" id="calcOG" value="1.050"/></div>' +
     '<div class="field"><label>Final Gravity</label><input type="number" step="0.001" id="calcFG" value="1.010"/></div>' +
@@ -2063,16 +2150,16 @@ function renderToolsMain(main) {
     '<div class="field"><label>Beer Temp (' + uLabel("temp-f") + ')</label><input type="number" step="1" id="calcKegTemp" value="' + uVal(38, "temp-f") + '"/></div>' +
     '<div class="field"><label>Target Volumes CO2</label><input type="number" step="0.1" id="calcKegTarget" value="2.4"/></div>' +
     '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label">Set Regulator To</span><span class="stat-value" id="calcKegOut">\u2014</span></div></div>' +
-    '<div class="card"><h3>Refractometer Correction</h3><p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Once alcohol is present, a refractometer over-reads \u2014 use this to find the true gravity from Brix.</p><div class="field-grid">' +
+    '<div class="card"><h3>Refractometer Correction</h3><p class="hint-text" style="margin:-4px 0 10px;">Once alcohol is present, a refractometer over-reads \u2014 use this to find the true gravity from Brix.</p><div class="field-grid">' +
     '<div class="field"><label>Original Brix (\u00b0Bx)</label><input type="number" step="0.1" id="calcRefriOB" value="12.4"/></div>' +
     '<div class="field"><label>Current Brix (\u00b0Bx)</label><input type="number" step="0.1" id="calcRefriFB" value="6.5"/></div>' +
     '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label">Corrected Gravity</span><span class="stat-value" id="calcRefriOut">\u2014</span></div></div>' +
-    '<div class="card"><h3>Boil-off / Dilution</h3><p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Figure out how much to boil off (concentrate) or top up with water (dilute) to hit a target gravity.</p><div class="field-grid">' +
+    '<div class="card"><h3>Boil-off / Dilution</h3><p class="hint-text" style="margin:-4px 0 10px;">Figure out how much to boil off (concentrate) or top up with water (dilute) to hit a target gravity.</p><div class="field-grid">' +
     '<div class="field"><label>Current Volume (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" id="calcDilVol" value="' + uVal(6, "volume-gal") + '"/></div>' +
     '<div class="field"><label>Current Gravity</label><input type="number" step="0.001" id="calcDilCurSG" value="1.040"/></div>' +
     '<div class="field"><label>Target Gravity</label><input type="number" step="0.001" id="calcDilTargetSG" value="1.050"/></div>' +
     '</div><div class="stat-row" style="margin-top:12px;"><span class="stat-label" id="calcDilLabel">Boil Off</span><span class="stat-value" id="calcDilOut">\u2014</span></div></div>' +
-    '<div class="card"><h3>Yeast Pitch Rate</h3><p style="color:var(--ink-faint);font-size:12px;margin:-4px 0 10px;">Rough guide only, not an exact growth model \u2014 a fresh liquid pack is typically ~100 billion cells; dry yeast packs are usually already enough for most standard-gravity ale batches.</p><div class="field-grid">' +
+    '<div class="card"><h3>Yeast Pitch Rate</h3><p class="hint-text" style="margin:-4px 0 10px;">Rough guide only, not an exact growth model \u2014 a fresh liquid pack is typically ~100 billion cells; dry yeast packs are usually already enough for most standard-gravity ale batches.</p><div class="field-grid">' +
     '<div class="field"><label>Original Gravity</label><input type="number" step="0.001" id="calcPitchOG" value="1.050"/></div>' +
     '<div class="field"><label>Batch Size (' + uLabel("volume-gal") + ')</label><input type="number" step="0.1" id="calcPitchVol" value="' + uVal(5, "volume-gal") + '"/></div>' +
     '<div class="field"><label>Style</label><select id="calcPitchStyle"><option>Ale</option><option>Lager</option></select></div>' +
@@ -2080,7 +2167,7 @@ function renderToolsMain(main) {
     '</div><div class="stat-row"><span class="stat-label">Cells Needed</span><span class="stat-value" id="calcPitchNeed">\u2014</span></div>' +
     '<div class="stat-row"><span class="stat-label">One Fresh Liquid Pack (adjusted for age)</span><span class="stat-value" id="calcPitchAvail">\u2014</span></div>' +
     '<div class="stat-row"><span class="stat-label" id="calcPitchVerdictLabel">Verdict</span><span class="stat-value" id="calcPitchVerdict">\u2014</span></div>' +
-    '<p style="color:var(--ink-faint);font-size:11.5px;margin:10px 0 0;">If underpitched: a stir-plate starter roughly adds 1.5\u20132x cell count per step, or simply pitch two packs.</p></div>' +
+    '<p class="hint-text" style="margin:10px 0 0;">If underpitched: a stir-plate starter roughly adds 1.5\u20132x cell count per step, or simply pitch two packs.</p></div>' +
     '<div class="card"><h3>Unit Converter</h3><div class="field-grid">' +
     '<div class="field"><label>Weight</label><input type="number" step="0.01" id="calcConvWeight" value="1"/></div>' +
     '<div class="field"><label>&nbsp;</label><select id="calcConvWeightUnit"><option value="kg">kg</option><option value="lb">lb</option><option value="oz">oz</option><option value="g">g</option></select></div>' +
@@ -2266,7 +2353,7 @@ function renderFileWorkspaceControls() {
   const el = document.getElementById("fileWorkspaceControls");
   if (!el) return;
   if (!FileWorkspace.supported) {
-    el.innerHTML = '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 8px;">Local file linking needs Chrome or Edge \u2014 use Export/Import below on this browser instead.</p>';
+    el.innerHTML = '<p class="hint-text" style="margin:0 0 8px;">Local file linking needs Chrome or Edge \u2014 use Export/Import below on this browser instead.</p>';
     return;
   }
   el.innerHTML =
@@ -2274,7 +2361,7 @@ function renderFileWorkspaceControls() {
     '<button class="btn btn-sm" id="openFileBtn" style="flex:1;">Open File\u2026</button>' +
     '<button class="btn btn-sm btn-primary" id="saveFileBtn" style="flex:1;">' + (FileWorkspace.linkedName ? "Save" : "Save As\u2026") + '</button>' +
     '</div>' +
-    '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 10px;">' +
+    '<p class="hint-text" style="margin:0 0 10px;">' +
     (FileWorkspace.linkedName
       ? 'Linked to <strong style="color:var(--ink-dim);">' + escapeHtml(FileWorkspace.linkedName) + '</strong> \u2014 Save writes straight back to it. <a href="#" id="unlinkFileBtn" style="color:var(--amber);">Unlink</a>'
       : "No file linked yet \u2014 Save will ask where to create one, then remembers it for next time.") +
@@ -2289,9 +2376,9 @@ async function handleOpenWorkingFile() {
   try {
     const data = await FileWorkspace.openFile();
     if (!data || !Array.isArray(data.recipes)) { toast("That file doesn't look like a Hops backup"); FileWorkspace.unlink(); return; }
-    if (state.recipes.length && !confirm('Open "' + FileWorkspace.linkedName + '"? This replaces everything currently shown in Hops (including this browser\'s own autosave) with the file\'s contents.')) {
-      FileWorkspace.unlink();
-      return;
+    if (state.recipes.length) {
+      const ok = await showConfirmModal("Open File?", 'Open "' + escapeHtml(FileWorkspace.linkedName) + '"? This replaces everything currently shown in Hops (including this browser\'s own autosave) with the file\'s contents.', { confirmLabel: "Open", danger: true });
+      if (!ok) { FileWorkspace.unlink(); return; }
     }
     const restored = Security.sanitizeDeep(data);
     (restored.recipes || []).forEach(migrateRecipe);

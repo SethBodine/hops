@@ -16,6 +16,30 @@
   --alert: #A6392B;
   --radius: 10px;
   --shadow: 0 8px 24px rgba(59,42,22,0.12);
+
+  /* ---- Type scale ----
+     A small, deliberate set of sizes instead of one-off values per component.
+     2xs/xs = micro labels & meta text, sm = secondary/compact UI text, base = default
+     body/controls, md = slightly emphasized small text, lg = card headings, xl = a
+     standalone highlighted number (e.g. an ion value), 2xl/3xl = brand/gauge numerals,
+     display-sm/display = page and recipe titles. */
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 15px;
+  --fs-xl: 17px;
+  --fs-2xl: 20px;
+  --fs-3xl: 22px;
+  --fs-display-sm: 28px;
+  --fs-display: 30px;
+
+  /* Shared control tokens, so every text input / select / picker-button in the app
+     (field, table cell, mash step, ion box, override, share link) draws from the same
+     background/border/radius instead of each one inventing its own look. */
+  --control-radius: 6px;
+  --control-radius-sm: 5px;
 }
 
 * { box-sizing: border-box; }
@@ -71,16 +95,16 @@ button {
 }
 
 .sidebar-header .brand {
-  font-size: 20px;
+  font-size: var(--fs-2xl);
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
 
-.sidebar-header .brand .mark { color: var(--amber); font-size: 22px; }
+.sidebar-header .brand .mark { color: var(--amber); font-size: var(--fs-3xl); }
 
 .sidebar-header .tagline {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-faint);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -97,7 +121,7 @@ button {
 }
 .section-tab {
   padding: 6px 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   border-radius: 6px;
   color: var(--ink-faint);
@@ -122,7 +146,7 @@ button {
   color: var(--ink);
   border-radius: 7px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-base);
   font-weight: 500;
   transition: border-color .15s, background .15s;
 }
@@ -132,7 +156,7 @@ button {
 .btn-primary:hover { background: #CE9138; }
 .btn-danger { color: var(--alert); }
 .btn-danger:hover { border-color: var(--alert); }
-.btn-sm { padding: 5px 9px; font-size: 12px; }
+.btn-sm { padding: 5px 9px; font-size: var(--fs-sm); }
 .btn-block { width: 100%; }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover { background: var(--card); }
@@ -152,13 +176,14 @@ button {
 }
 .recipe-item:hover { background: var(--card); }
 .recipe-item.active { background: var(--card-raised); border-color: var(--amber-dim); }
-.recipe-item .name { font-weight: 600; font-size: 14px; }
-.recipe-item .meta { font-size: 11px; color: var(--ink-faint); margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+.item-eyebrow { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin-bottom: 2px; }
+.recipe-item .name { font-weight: 600; font-size: var(--fs-md); }
+.recipe-item .meta { font-size: var(--fs-xs); color: var(--ink-faint); margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
 
 .sidebar-footer {
   padding: 12px 14px;
   border-top: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-faint);
 }
 .sidebar-footer input[type=file] { display: none; }
@@ -181,12 +206,12 @@ button {
 .tree-row[data-depth]:not([data-depth="0"]) { border-left: 2px solid var(--line); margin-left: 6px; }
 .tree-row.dragging { opacity: 0.4; }
 .tree-row.drag-over { border-color: var(--amber); background: var(--card-raised); }
-.tree-caret { width: 10px; color: var(--ink-faint); font-size: 10px; flex-shrink: 0; }
-.tree-icon { flex-shrink: 0; font-size: 13px; }
-.tree-folder .tree-label { font-weight: 600; font-size: 13px; color: var(--ink-dim); }
-.tree-count { margin-left: auto; font-size: 10px; color: var(--ink-faint); font-family: 'JetBrains Mono', monospace; }
-.tree-recipe .tree-label { font-weight: 600; font-size: 13.5px; }
-.tree-recipe .tree-meta { font-size: 10.5px; color: var(--ink-faint); margin-top: 1px; font-family: 'JetBrains Mono', monospace; }
+.tree-caret { width: 10px; color: var(--ink-faint); font-size: var(--fs-2xs); flex-shrink: 0; }
+.tree-icon { flex-shrink: 0; font-size: var(--fs-base); }
+.tree-folder .tree-label { font-weight: 600; font-size: var(--fs-base); color: var(--ink-dim); }
+.tree-count { margin-left: auto; font-size: var(--fs-2xs); color: var(--ink-faint); font-family: 'JetBrains Mono', monospace; }
+.tree-recipe .tree-label { font-weight: 600; font-size: var(--fs-base); }
+.tree-recipe .tree-meta { font-size: var(--fs-2xs); color: var(--ink-faint); margin-top: 1px; font-family: 'JetBrains Mono', monospace; }
 
 /* ---- Context menu ---- */
 .context-menu {
@@ -203,7 +228,7 @@ button {
 }
 .ctx-item {
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-base);
   border-radius: 5px;
   cursor: pointer;
 }
@@ -230,6 +255,15 @@ button {
 }
 .modal-box h3 { margin-top: 0; }
 .modal-box.picker-modal { max-width: 560px; max-height: 82vh; display: flex; flex-direction: column; }
+/* Shared body text + action-row treatment for the confirm()/prompt() replacements, so every
+   in-app dialog (rename, delete, status-change warnings, etc.) looks like one consistent
+   system instead of some using this modal and others falling back to the browser's native
+   confirm/prompt chrome. */
+.modal-body-text { color: var(--ink-dim); font-size: var(--fs-base); margin: 0 0 4px; }
+.modal-body-text ul { margin: 8px 0 0; padding-left: 20px; }
+.modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
+.modal-actions .btn { flex: 1; }
+.modal-box .field { margin-top: 14px; }
 .picker-search {
   width: 100%;
   background: var(--bg-panel);
@@ -238,13 +272,13 @@ button {
   padding: 9px 12px;
   color: var(--ink);
   font-family: 'Inter', sans-serif;
-  font-size: 14px;
+  font-size: var(--fs-md);
   margin-bottom: 4px;
 }
 .picker-search:focus { outline: none; border-color: var(--amber-dim); }
 .picker-list { overflow-y: auto; margin-top: 6px; padding-right: 2px; }
 .picker-group-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--ink-faint);
@@ -263,12 +297,17 @@ button {
 }
 .picker-row:hover { background: var(--card); }
 .picker-row.current { background: rgba(199,146,58,0.12); border: 1px solid var(--amber-dim); }
-.picker-row-name { font-size: 13.5px; color: var(--ink); font-weight: 600; }
-.picker-row-meta { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px; }
-.picker-stock { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; flex-shrink: 0; }
+.picker-row-name { font-size: var(--fs-base); color: var(--ink); font-weight: 600; }
+.picker-row-meta { font-size: var(--fs-xs); color: var(--ink-faint); margin-top: 1px; }
+.picker-stock { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-xs); color: var(--ink-dim); white-space: nowrap; flex-shrink: 0; }
 .picker-stock.low { color: var(--alert); }
 
-/* Ingredient-table "picker" buttons (replace the old <select> for name) */
+/* Ingredient-table "picker" buttons (replace the old <select> for name). These are
+   conceptually a field (they hold and change a value), so they're styled to match the
+   neighbouring text/number inputs - same background, border and font - rather than a
+   generic .btn, which previously made "Name" (button-styled) and "Amount" (input-styled)
+   look like two unrelated controls in the same row. A chevron marks the click-to-change
+   affordance that the plain input styling alone wouldn't convey. */
 .ing-table .picker-btn, .field .picker-btn {
   width: 100%;
   text-align: left;
@@ -277,6 +316,30 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  padding-right: 24px;
+}
+.ing-table .picker-btn:hover, .field .picker-btn:hover { background: var(--bg-panel); border-color: var(--amber-dim); }
+.ing-table .picker-btn::after, .field .picker-btn::after {
+  content: "\2304";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+.ing-table .picker-btn {
+  border-radius: var(--control-radius-sm);
+  padding-top: 5px; padding-bottom: 5px; padding-left: 7px;
+  font-size: var(--fs-sm);
+}
+.field .picker-btn {
+  border-radius: var(--control-radius);
+  padding-top: 8px; padding-bottom: 8px; padding-left: 10px;
+  font-size: var(--fs-base);
 }
 .share-link-input {
   width: 100%;
@@ -286,7 +349,7 @@ button {
   color: var(--ink);
   padding: 9px 10px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin-top: 8px;
 }
 
@@ -308,6 +371,18 @@ button {
 }
 .empty-state h2 { color: var(--ink-dim); }
 
+/* ---- Shared utility classes ----
+   page-title: the plain section pages (Equipment, Inventory, Tools) that previously
+   repeated 'style="margin:0;font-size:28px;"' inline on every <h1>.
+   hint-text: the small muted helper paragraph under a card/section title, previously
+   scattered across app.js at several close-but-different sizes (11px/11.5px/12px/13px). */
+.page-title { margin: 0; font-size: var(--fs-display-sm); }
+.hint-text { color: var(--ink-faint); font-size: var(--fs-sm); margin: -4px 0 10px; }
+.hint-text.tight { margin-top: -6px; }
+.hint-text strong { color: var(--ink-dim); }
+.section-heading { font-size: var(--fs-base); font-weight: 600; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 4px; }
+.section-divider { border: none; border-top: 1px solid var(--line); margin: 28px 0 20px; }
+
 .recipe-header {
   display: flex;
   justify-content: space-between;
@@ -320,7 +395,7 @@ button {
   background: transparent;
   border: none;
   font-family: 'Fraunces', serif;
-  font-size: 30px;
+  font-size: var(--fs-display);
   font-weight: 600;
   color: var(--ink);
   width: 100%;
@@ -333,7 +408,7 @@ button {
 
 .batch-age-badge {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--ink-dim);
   background: var(--card);
   border: 1px solid var(--line);
@@ -356,7 +431,7 @@ button {
   gap: 16px;
   flex-wrap: wrap;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-faint);
   margin-bottom: 10px;
 }
@@ -383,7 +458,7 @@ button {
 }
 
 .gauge .label {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   text-transform: uppercase;
   letter-spacing: 0.09em;
   color: var(--ink-faint);
@@ -392,14 +467,14 @@ button {
 
 .gauge .value {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 22px;
+  font-size: var(--fs-3xl);
   font-weight: 700;
   color: var(--ink);
   display: flex;
   align-items: baseline;
   gap: 4px;
 }
-.gauge .value .unit { font-size: 12px; color: var(--ink-faint); font-weight: 400; }
+.gauge .value .unit { font-size: var(--fs-sm); color: var(--ink-faint); font-weight: 400; }
 
 .gauge .range-track {
   margin-top: 10px;
@@ -426,7 +501,7 @@ button {
   box-shadow: 0 0 5px rgba(185,121,31,0.5);
 }
 .gauge.out .range-marker { background: var(--alert); box-shadow: 0 0 5px rgba(166,57,43,0.5); }
-.gauge .range-label { font-size: 10px; color: var(--ink-faint); margin-top: 6px; font-family: 'JetBrains Mono', monospace; }
+.gauge .range-label { font-size: var(--fs-2xs); color: var(--ink-faint); margin-top: 6px; font-family: 'JetBrains Mono', monospace; }
 
 .color-swatch {
   width: 34px; height: 34px;
@@ -447,9 +522,9 @@ button {
   margin-bottom: 20px;
   cursor: help;
 }
-.sanity-icon { font-size: 18px; flex-shrink: 0; line-height: 1.4; }
-.sanity-headline { font-size: 13px; font-weight: 600; color: var(--alert); }
-.sanity-list { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--ink-dim); }
+.sanity-icon { font-size: 18px; flex-shrink: 0; line-height: 1.4; } /* emoji glyph size, not body text - kept outside the type scale on purpose */
+.sanity-headline { font-size: var(--fs-base); font-weight: 600; color: var(--alert); }
+.sanity-list { margin: 6px 0 0; padding-left: 18px; font-size: var(--fs-sm); color: var(--ink-dim); }
 .sanity-list li { margin-bottom: 2px; }
 
 /* ---- Suggested status banner (Batches tab) ---- */
@@ -464,15 +539,15 @@ button {
   padding: 12px 16px;
   margin-bottom: 20px;
 }
-.suggest-icon { font-size: 18px; flex-shrink: 0; }
-.suggest-text { font-size: 13px; color: var(--ink-dim); flex: 1; min-width: 200px; }
+.suggest-icon { font-size: 18px; flex-shrink: 0; } /* emoji glyph size, not body text - kept outside the type scale on purpose */
+.suggest-text { font-size: var(--fs-base); color: var(--ink-dim); flex: 1; min-width: 200px; }
 .suggest-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 /* ---- Run Checks modal report ---- */
 .check-group { margin-bottom: 14px; }
 .check-group:last-child { margin-bottom: 0; }
-.check-group h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
-.check-group ul { margin: 0; padding-left: 20px; font-size: 12.5px; color: var(--ink-dim); }
+.check-group h4 { margin: 0 0 6px; font-size: var(--fs-base); font-weight: 600; }
+.check-group ul { margin: 0; padding-left: 20px; font-size: var(--fs-sm); color: var(--ink-dim); }
 .check-group li { margin-bottom: 4px; }
 .check-error h4 { color: var(--alert); }
 .check-warning h4 { color: var(--amber); }
@@ -487,14 +562,18 @@ button {
 }
 .tab {
   padding: 10px 16px;
-  font-size: 13px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--ink-faint);
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  transition: color .15s, background .15s;
 }
-.tab:hover { color: var(--ink-dim); }
+.tab:hover { color: var(--ink-dim); background: var(--card); }
 .tab.active { color: var(--amber); border-bottom-color: var(--amber); }
+.tab.active:hover { background: transparent; }
 
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
@@ -508,13 +587,17 @@ button {
   margin-bottom: 20px;
 }
 .card h3 {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   margin: 0 0 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
 }
 .card h3 .btn { font-family: 'Inter', sans-serif; }
+/* Card headings sometimes group a select + button (or two buttons) together on the
+   right in a <span> - give that group internal spacing so controls don't touch. */
+.card h3 > span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .field-grid {
   display: grid;
@@ -523,7 +606,7 @@ button {
 }
 .field label {
   display: block;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--ink-faint);
@@ -533,10 +616,10 @@ button {
   width: 100%;
   background: var(--bg-panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   padding: 8px 10px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-base);
   font-family: 'JetBrains Mono', monospace;
 }
 .field input[type=checkbox], .field input[type=radio] {
@@ -559,11 +642,11 @@ button {
 table.ing-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 table.ing-table th {
   text-align: left;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--ink-faint);
@@ -580,19 +663,19 @@ table.ing-table tr:last-child td { border-bottom: none; }
 table.ing-table input, table.ing-table select {
   background: var(--bg-panel);
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: var(--control-radius-sm);
   color: var(--ink);
   padding: 5px 7px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   width: 100%;
   font-family: 'JetBrains Mono', monospace;
 }
 table.ing-table select { font-family: 'Inter', sans-serif; }
 table.ing-table .num { font-family: 'JetBrains Mono', monospace; text-align: right; color: var(--ink-dim); }
-table.ing-table .del-btn { color: var(--ink-faint); background: none; border: none; font-size: 15px; padding: 2px 6px; }
+table.ing-table .del-btn { color: var(--ink-faint); background: none; border: none; font-size: var(--fs-lg); padding: 2px 6px; }
 table.ing-table .del-btn:hover { color: var(--alert); }
 .row-actions { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.row-actions .btn-sm { padding: 4px 7px; font-size: 11px; }
+.row-actions .btn-sm { padding: 4px 7px; font-size: var(--fs-xs); }
 .add-row-btn { margin-top: 10px; }
 
 .empty-row td { text-align: center; color: var(--ink-faint); padding: 18px; font-style: italic; }
@@ -607,7 +690,7 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   border-bottom: 1px solid var(--line);
 }
 .style-compare-row:last-child { border-bottom: none; }
-.style-compare-row .metric-name { font-size: 12px; color: var(--ink-dim); font-weight: 600; }
+.style-compare-row .metric-name { font-size: var(--fs-sm); color: var(--ink-dim); font-weight: 600; }
 .style-compare-row .track {
   height: 8px;
   background: var(--bg-panel);
@@ -634,7 +717,7 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   position: absolute;
   top: 14px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--ink-faint);
   white-space: nowrap;
   transform: translateX(-50%);
@@ -663,25 +746,25 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   opacity: 0.8;
 }
 .style-compare-row .dot.dot-secondary.out { background: var(--alert); opacity: 0.6; }
-.style-compare-row .value-label { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-align: right; }
-.style-compare-row .value-label .range-text { display: block; font-size: 10.5px; color: var(--ink-faint); margin-top: 2px; }
+.style-compare-row .value-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-sm); text-align: right; }
+.style-compare-row .value-label .range-text { display: block; font-size: var(--fs-2xs); color: var(--ink-faint); margin-top: 2px; }
 .style-compare-row .override-cell { display: flex; align-items: center; gap: 4px; }
 .style-compare-row .override-input {
   width: 100%;
   min-width: 0;
   background: var(--bg-panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   padding: 5px 6px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--ink);
 }
 .style-compare-row .override-input:focus { outline: none; border-color: var(--amber-dim); }
 .style-compare-row .override-input::placeholder { color: var(--ink-faint); font-family: 'Inter', sans-serif; }
 .style-compare-row .override-clear {
   background: none; border: none; color: var(--ink-faint);
-  font-size: 12px; cursor: pointer; padding: 2px 4px; flex-shrink: 0;
+  font-size: var(--fs-sm); cursor: pointer; padding: 2px 4px; flex-shrink: 0;
 }
 .style-compare-row .override-clear:hover { color: var(--alert); }
 
@@ -698,10 +781,27 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   padding: 10px 12px;
   text-align: center;
 }
-.ion-box .ion-name { font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.06em; }
-.ion-box .ion-value { font-family: 'JetBrains Mono', monospace; font-size: 17px; margin-top: 4px; color: var(--amber); }
+.ion-box .ion-name { font-size: var(--fs-xs); color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.ion-box .ion-value { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-xl); margin-top: 4px; color: var(--amber); }
+/* The Base Water Profile ion boxes are editable inputs, unlike the (read-only, computed)
+   Adjusted Mash/Sparge ion boxes elsewhere on this tab - give them visible input chrome
+   (border, background, focus ring) so that difference is obvious at a glance instead of
+   both looking like plain static numbers. */
+.ion-box .ion-input {
+  width: 100%;
+  text-align: center;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius-sm);
+  color: var(--amber);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--fs-xl);
+  margin-top: 4px;
+  padding: 3px 4px;
+}
+.ion-box .ion-input:focus { outline: none; border-color: var(--amber-dim); background: var(--card); }
 
-.stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-base); }
 .stat-row:last-child { border-bottom: none; }
 .stat-row .stat-label { color: var(--ink-faint); }
 .stat-row .stat-value { font-family: 'JetBrains Mono', monospace; color: var(--ink); }
@@ -718,14 +818,14 @@ table.ing-table .del-btn:hover { color: var(--alert); }
   width: 100%;
   background: var(--bg-panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   padding: 8px 10px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-base);
   font-family: 'JetBrains Mono', monospace;
 }
 .mash-step input:focus { outline: none; border-color: var(--amber-dim); }
-.mash-step .del-btn { color: var(--ink-faint); background: none; border: none; font-size: 15px; padding: 2px 6px; }
+.mash-step .del-btn { color: var(--ink-faint); background: none; border: none; font-size: var(--fs-lg); padding: 2px 6px; }
 .mash-step .del-btn:hover { color: var(--alert); }
 
 /* ---- Notes ---- */
@@ -738,7 +838,7 @@ textarea.notes-area {
   color: var(--ink);
   padding: 12px;
   font-family: 'Inter', sans-serif;
-  font-size: 13px;
+  font-size: var(--fs-base);
   resize: vertical;
 }
 textarea.notes-area:focus { outline: none; border-color: var(--amber-dim); }
@@ -753,7 +853,7 @@ textarea.notes-area:focus { outline: none; border-color: var(--amber-dim); }
   color: var(--ink);
   padding: 10px 18px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--fs-base);
   box-shadow: var(--shadow);
   opacity: 0;
   pointer-events: none;
@@ -792,7 +892,7 @@ textarea.notes-area:focus { outline: none; border-color: var(--amber-dim); }
     border-bottom: 1px solid var(--line);
     background: var(--bg-panel);
   }
-  .mobile-topbar .brand { font-family: 'Fraunces', serif; font-size: 17px; }
+  .mobile-topbar .brand { font-family: 'Fraunces', serif; font-size: var(--fs-xl); }
   .mobile-topbar .brand .mark { color: var(--amber); }
   #sidebarToggle {
     background: var(--card);
@@ -800,7 +900,7 @@ textarea.notes-area:focus { outline: none; border-color: var(--amber-dim); }
     color: var(--ink);
     border-radius: 7px;
     padding: 7px 11px;
-    font-size: 16px;
+    font-size: 16px; /* hamburger glyph size, not body text - kept outside the type scale on purpose */
     line-height: 1;
   }
 
@@ -825,7 +925,7 @@ textarea.notes-area:focus { outline: none; border-color: var(--amber-dim); }
   .main { padding: 16px 14px 60px; }
 
   .recipe-header { flex-direction: column; align-items: stretch; gap: 10px; }
-  .recipe-title-input { font-size: 22px; }
+  .recipe-title-input { font-size: var(--fs-3xl); }
   .header-actions { flex-wrap: wrap; }
   .header-actions .btn { flex: 1 1 auto; }
 
