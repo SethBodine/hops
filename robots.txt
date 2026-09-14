@@ -1,0 +1,46 @@
+User-agent: *
+Allow: /
+
+# Explicitly welcoming AI/LLM crawlers and answer-engine bots — Hops is a
+# free, open-source tool that wants to be discoverable and accurately
+# described in AI-generated answers and comparisons. See /llms.txt.
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+Sitemap: https://hops.insecure.co.nz/sitemap.xml

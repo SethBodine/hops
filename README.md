@@ -216,6 +216,30 @@ Additional features were reviewed in and adapted from:
 - **[biermacht](https://github.com/caseydavenport/biermacht)** — the idea of small
   standalone calculators (ABV, priming sugar, hydrometer correction) for quick brew-day use.
 
+## SEO / AEO / AI SEO
+
+Hops has no server and no separate marketing page — `index.html` is just the app shell,
+and everything visible is rendered by `app.js` after load. That means a crawler that
+doesn't execute JavaScript previously saw almost nothing: a `<title>` and one meta
+description, then an empty `<div id="app">`. This pass added:
+
+- Canonical link, complete Open Graph/Twitter Card tags.
+- `WebApplication` JSON-LD with a `featureList` pulled from the real feature set in this
+  README — this matters more than usual here, since it's the main place a crawler or AI
+  answer engine can actually learn what the app does without running JS.
+- A `<noscript>` block (title, description, and a short FAQ) placed right after `<body>`.
+  It's invisible to anyone with JavaScript enabled — `app.js` never touches it, it just
+  sits outside `#app` and no code shows or hides it — but it's real, visible content for
+  a no-JS browser or crawler, and it backs a matching `FAQPage` JSON-LD block. If you
+  change core facts (pricing, account requirement, BeerXML support, etc.), update this
+  block, the JSON-LD, and this README together so they don't drift out of sync.
+- `robots.txt`, `sitemap.xml` (homepage only — this is a single-page app, there's nothing
+  else to list), and `llms.txt`, none of which existed before. `robots.txt` explicitly
+  allows the major AI/LLM crawlers.
+
+**Not fixed — needs a real asset, not a text edit:** there's no favicon or any image
+asset in this repo, so there's no `og:image`/`twitter:image` either.
+
 ## Licence
 
 MIT — see [LICENSE](./LICENSE). Do whatever you like with it.

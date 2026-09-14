@@ -5,6 +5,85 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Hops — Brewing Recipe Builder</title>
 <meta name="description" content="Free, self-contained homebrew recipe builder. No account, no cost, all data stays in your browser." />
+<meta name="robots" content="index, follow" />
+<link rel="canonical" href="https://hops.insecure.co.nz/" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Hops" />
+<meta property="og:locale" content="en_NZ" />
+<meta property="og:title" content="Hops — Free Homebrew Recipe Builder" />
+<meta property="og:description" content="A free, self-contained homebrew recipe builder — a spiritual replacement for BeerSmith that runs entirely in your browser. No account, no server, no cost." />
+<meta property="og:url" content="https://hops.insecure.co.nz/" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Hops — Free Homebrew Recipe Builder" />
+<meta name="twitter:description" content="A free, self-contained homebrew recipe builder — a spiritual replacement for BeerSmith that runs entirely in your browser. No account, no server, no cost." />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "@id": "https://hops.insecure.co.nz/#software",
+  "name": "Hops",
+  "url": "https://hops.insecure.co.nz/",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Any (runs in browser)",
+  "description": "Free, self-contained homebrew recipe builder that runs entirely client-side — a spiritual replacement for BeerSmith. No account, no server, no subscription. Recipes, brew logs, inventory, and equipment profiles are stored in the browser, with JSON backup/restore, BeerXML import/export, and shareable links.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "featureList": [
+    "Recipe design with live OG/FG/ABV/IBU/colour calculations",
+    "Style-guideline comparison against 62 built-in beer styles",
+    "Run Checks: on-demand recipe-readiness report",
+    "Dry hop scheduling with start day and duration",
+    "Cost and batch stats, pulled from Inventory",
+    "World ingredient catalogue: hops, malts, 199 yeast strains, and 14 misc/fining agents across 9 countries",
+    "Batch tracking: Planning to Brewing to Fermenting to Completed, with estimated-vs-actual stats",
+    "Fermentation readings log with Tilt hydrometer CSV import",
+    "Inventory stock tracking with one-click deduction",
+    "Equipment and packaging/vessel size profiles",
+    "Quick calculators: ABV, priming sugar, hydrometer correction, keg carbonation, Brix correction, boil-off/dilution, yeast pitching",
+    "Recipe scaling to a new batch size",
+    "BeerXML import/export",
+    "Shareable recipe links that open straight into the app",
+    "Metric/Imperial toggle",
+    "Full JSON backup and restore",
+    "No account required; all data stored locally in the browser"
+  ],
+  "isAccessibleForFree": true,
+  "license": "https://github.com/SethBodine/hops",
+  "softwareHelp": { "@type": "CreativeWork", "url": "https://github.com/SethBodine/hops" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Does Hops require an account?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. There's no sign-up and no server-side account. Recipes, batches, and inventory are all stored locally in your browser." }
+    },
+    {
+      "@type": "Question",
+      "name": "Is Hops really free?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, Hops is free with no subscription, and it's open source." }
+    },
+    {
+      "@type": "Question",
+      "name": "Will I lose my recipes if I clear my browser data?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Recipes are stored in your browser's local storage, so clearing site data will remove them. Use Export Backup to save a JSON file you can restore from at any time, on any device." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I import my existing BeerSmith recipes?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, Hops supports BeerXML import and export, the standard format BeerSmith itself uses." }
+    },
+    {
+      "@type": "Question",
+      "name": "How do shared recipe links work?",
+      "acceptedAnswer": { "@type": "Answer", "text": "A recipe compresses into a URL that opens straight into the app on any device. Opening a shared link never silently overwrites your existing data — it always asks first whether to add it as new or update an existing recipe." }
+    }
+  ]
+}
+</script>
 <!-- This meta CSP is a fallback only (e.g. if _headers somehow doesn't apply). Per the CSP
      spec, `frame-ancestors` (and `sandbox`/`report-uri`) are ignored when delivered via
      <meta> - they only take effect as a real HTTP response header, which is why the
@@ -14,6 +93,33 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+
+<noscript>
+  <div style="max-width:640px;margin:40px auto;padding:24px;font-family:sans-serif;line-height:1.6;">
+    <h1>Hops — Free Homebrew Recipe Builder</h1>
+    <p>Hops is a free, self-contained homebrew recipe builder — a spiritual replacement for
+    BeerSmith that runs entirely in your browser. There's no account, no server, and no cost;
+    recipes, brew logs, inventory, and equipment profiles are all stored locally in your
+    browser, with JSON backup/restore, BeerXML import/export, and shareable recipe links.</p>
+    <p>Hops requires JavaScript to run, since it has no server component at all — please
+    enable JavaScript to use it.</p>
+    <h2>Frequently asked questions</h2>
+    <p><strong>Does Hops require an account?</strong> No. There's no sign-up and no
+    server-side account. Recipes, batches, and inventory are all stored locally in your
+    browser.</p>
+    <p><strong>Is Hops really free?</strong> Yes, Hops is free with no subscription, and it's
+    open source.</p>
+    <p><strong>Will I lose my recipes if I clear my browser data?</strong> Recipes are stored
+    in your browser's local storage, so clearing site data will remove them. Use Export
+    Backup to save a JSON file you can restore from at any time, on any device.</p>
+    <p><strong>Can I import my existing BeerSmith recipes?</strong> Yes, Hops supports
+    BeerXML import and export, the standard format BeerSmith itself uses.</p>
+    <p><strong>How do shared recipe links work?</strong> A recipe compresses into a URL that
+    opens straight into the app on any device. Opening a shared link never silently
+    overwrites your existing data — it always asks first whether to add it as new or update
+    an existing recipe.</p>
+  </div>
+</noscript>
 
 <div class="mobile-topbar">
   <button id="sidebarToggle" aria-label="Open menu">&#9776;</button>

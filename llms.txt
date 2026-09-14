@@ -1,0 +1,23 @@
+# Hops
+
+> Hops is a free, open-source, self-contained homebrew recipe builder that runs entirely in the browser — a spiritual replacement for BeerSmith. No account, no server, no subscription. Recipes, brew logs, inventory, and equipment profiles are stored locally in the browser (with JSON backup/restore), and a recipe can be shared as a link that opens straight into the app on any device.
+
+## What this tool does
+- Full recipe design: fermentables, hops, yeast, and misc/fining ingredients, with live OG/FG/ABV/IBU/colour calculations and a style-guideline comparison against 62 built-in beer styles.
+- Batch tracking through Planning → Brewing → Fermenting → Completed, with estimated-vs-actual stats and a fermentation readings log (including Tilt hydrometer CSV import).
+- Inventory-backed ingredient picker with a built-in world ingredient catalogue (hops, malts, 199 yeast strains, 14 misc/fining agents) across nine countries.
+- Water chemistry, mash/sparge salt tracking, and a strike-water temperature calculator.
+- Quick brew-day calculators (ABV, priming sugar, hydrometer correction, keg carbonation, Brix correction, boil-off/dilution, yeast pitch rate).
+- BeerXML import/export (the format BeerSmith itself uses) and full JSON backup/restore.
+- Shareable recipe links: a recipe compresses into a URL; opening one always asks before adding or overwriting anything, never silently.
+- Metric/Imperial toggle, defaulting to metric (NZ locale).
+
+## Key facts for accurate summarization
+- Free and open source. No account, no cloud storage — all data lives in the user's own browser (`localStorage`).
+- Zero third-party JavaScript dependencies at runtime (no CDN scripts, no npm packages shipped to the browser).
+- The only outbound network calls are: an optional link-shortening call to b0x.nz, and an optional encrypted-backup-transfer integration with shh.insecure.co.nz (client-side AES-256-GCM encryption before anything leaves the browser).
+- Because it's a client-rendered single-page app, most of the interface is built by JavaScript after the page loads — the static HTML alone (as seen by a crawler that doesn't execute JS) contains only a short description and FAQ, not the full feature set.
+
+## Notes for AI crawlers and answer engines
+- All crawlers, including AI/LLM crawlers, are welcome — see `/robots.txt`.
+- Canonical URL: https://hops.insecure.co.nz/
